@@ -36,7 +36,6 @@ import requests
 import xgboost as xgb
 
 from train_xgb import FEATURE_COLS, add_features  # reuse feature engineering
-
 BASE = os.path.dirname(os.path.abspath(__file__))
 HIST_DIR = os.path.join(BASE, "data", "history")
 PQ_PATH = os.path.join(BASE, "data", "history_id_5y.parquet")
@@ -267,7 +266,38 @@ def train_and_predict(df, macro_df, meta):
     return out, model, full_cols, float(model.best_score), float(best_t)
 
 
+def _atomic_write(df_or_str, path):
+    """Tulis file secara atomik (temp + rename) supaya pembaca tidak
+    pernah melihat file setengah jadi (penting saat bot membaca bersamaan)."""
+    tmp = path + ".tmp"
+    if hasattr(df_or_str, "to_csv"):
+        df_or_str.to_csv(tmp, index=False)
+    else:
+        with open(tmp, "w") as f:
+            f.write(df_or_str)
+    os.replace(tmp, path)
+
+
+def _append_log(df, path):
+    """Append baris log riwayat (buat file baru kalau belum ada)."""
+    if os.path.exists(path):
+        df.to_csv(path, mode="a", header=False, index=False)
+    else:
+        df.to_csv(path, index=False)
+
+
 def main():
+    # lock anti-bentrok: jangan biarkan predict_daily berjalan ganda
+    # (mis. cron & bot --refresh bersamaan)
+    try:
+        import fcntl
+        lock_fd = open(os.path.join(BASE, "data", ".predict_daily.lock"), "w")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (ImportError, OSError):
+        lock_fd = None  # tanpa lock (Windows / tidak bisa)
+    except BlockingIOError:
+        sys.exit("predict_daily.py sudah berjalan — tunggu selesai.")
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--refresh", action="store_true", help="update data historis dulu")
     args = ap.parse_args()
@@ -302,7 +332,7 @@ def main():
     print("\nFeature engineering + training + prediksi...")
     out, model, cols, valid_auc, best_t = train_and_predict(df, macro_df, meta)
 
-    out.to_csv(OUT_CSV, index=False, encoding="utf-8-sig")
+    # tulis JSON dulu (atomik), lalu CSV — pembaca (bot) membaca JSON
     payload = {
         "tanggal_prediksi": (out["tanggal"].max() + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
         "data_sampai": out["tanggal"].max().strftime("%Y-%m-%d"),
@@ -315,8 +345,9 @@ def main():
                       "close", "volume", "value_traded",
                       "prob_up", "signal", "confidence"]].to_dict(orient="records"),
     }
-    with open(OUT_JSON, "w") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    _atomic_write(json.dumps(payload, ensure_ascii=False, indent=2), OUT_JSON)
+    _atomic_write(out, OUT_CSV)
+    print(f"Output ditulis atomik: {OUT_CSV} / {OUT_JSON}")
 
     # simpan model + metadata
     model.save_model(os.path.join(BASE, "data", "model_daily.ubj"))
@@ -338,7 +369,7 @@ def main():
         old = pd.read_csv(ARCHIVE, dtype={"ticker": str})
         arch = pd.concat([old, arch]).drop_duplicates(
             subset=["tanggal_prediksi", "ticker"], keep="last")
-    arch.to_csv(ARCHIVE, index=False)
+    _atomic_write(arch, ARCHIVE)
     print(f"Arsip prediksi: {len(arch):,} baris -> {ARCHIVE}")
 
     # log riwayat
@@ -350,9 +381,9 @@ def main():
         "n_naik": int((out["prob_up"] >= best_t).sum()),
     }])
     if os.path.exists(LOG_CSV):
-        log.to_csv(LOG_CSV, mode="a", header=False, index=False)
+        _append_log(log, LOG_CSV)
     else:
-        log.to_csv(LOG_CSV, index=False)
+        _append_log(log, LOG_CSV)
 
     # ---------------------------------------------------------- tampilkan
     print("\n" + "=" * 72)

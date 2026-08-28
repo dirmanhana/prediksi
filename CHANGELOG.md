@@ -2,6 +2,25 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.7.0] — 2026-08-28
+### Added
+- **Mode webhook**: `WEBHOOK_URL` / `WEBHOOK_PORT` / `WEBHOOK_SECRET` di `.env`.
+  chatetin POST event pesan ke server bot → hemat API utk skala banyak user
+  (polling otomatis dimatikan saat webhook aktif).
+- **Parser webhook defensif** (`parse_webhook_message`) + server HTTP bawaan
+  (`/health`, verifikasi `X-Webhook-Secret`).
+- **Watchlist per-user**: tiap nomor punya daftar sendiri
+  (`data/watchlists.json`); laporan otomatis harian dikirim per-user.
+- **`install.sh`**: deploy VPS sekali jalan — deps (tanpa torch), `.env`,
+  systemd service, cron harian.
+- **Lock anti-bentrok** di `predict_daily.py` (flock) + **tulis file atomik**
+  (temp+rename) supaya bot tidak membaca file setengah jadi.
+- **Backoff exponensial** di `_request` utk rate-limit (429/5xx).
+
+### Refactor
+- Logika pesan masuk dipindah ke `MessageProcessor` — dipakai bersama oleh
+  polling & webhook (anti duplikasi balasan).
+
 ## [v0.6.0] — 2026-08-28
 ### Added
 - **Fitur watchlist**: `watch TLKM,BBRI`, `tambah TLKM`, `hapus TLKM`, `lapor`.

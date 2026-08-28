@@ -101,18 +101,30 @@ class ChatetinClient:
         return self.token
 
     def _request(self, method, path, **kw):
-        try:
-            r = self.s.request(method, f"{self.base}{path}", timeout=30, **kw)
-        except requests.RequestException as e:
-            # token mungkin expire -> coba login ulang sekali
-            log(f"Request error {path}: {e}; coba login ulang...")
-            self.login(force=True)
-            r = self.s.request(method, f"{self.base}{path}", timeout=30, **kw)
-        if r.status_code == 401:
-            self.login(force=True)
-            r = self.s.request(method, f"{self.base}{path}", timeout=30, **kw)
-        r.raise_for_status()
-        return r.json()
+        """Request dengan retry + backoff exponensial pada 429/5xx."""
+        attempts = 0
+        while True:
+            try:
+                r = self.s.request(method, f"{self.base}{path}", timeout=30, **kw)
+            except requests.RequestException as e:
+                # token mungkin expire -> coba login ulang sekali
+                attempts += 1
+                log(f"Request error {path}: {e}; coba login ulang (attempt {attempts})")
+                self.login(force=True)
+                r = self.s.request(method, f"{self.base}{path}", timeout=30, **kw)
+            if r.status_code == 401 and attempts < 2:
+                attempts += 1
+                self.login(force=True)
+                continue
+            if r.status_code in (429, 500, 502, 503) and attempts < 4:
+                attempts += 1
+                wait = 2 ** attempts + 1
+                log(f"⚠️ {path}: HTTP {r.status_code} — backoff {wait}s "
+                    f"(attempt {attempts}/4)")
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            return r.json()
 
     # -- devices -------------------------------------------------------
     def get_device(self):
@@ -124,6 +136,16 @@ class ChatetinClient:
                 self.device_id = d["id"]
                 return d
         raise RuntimeError("Tidak ada device yang logged_in di akun chatetin")
+
+    def register_webhook(self, url, events="message", secret=""):
+        """Daftarkan webhook ke chatetin utk event tertentu."""
+        if not self.device_id:
+            self.get_device()
+        data = self._request("PATCH", f"/devices/{self.device_id}/webhook",
+                             json={"webhook_url": url, "webhook_events": events,
+                                   "webhook_secret": secret,
+                                   "webhook_insecure_skip_verify": False})
+        return data
 
     # -- send ----------------------------------------------------------
     def send_message(self, phone, message):
@@ -269,21 +291,33 @@ def format_single(payload, ticker):
 ARCHIVE = os.path.join(BASE, "data", "prediction_archive.csv")
 
 # ---------------------------------------------------------------- watchlist
-WATCH_FILE = os.path.join(BASE, "data", "wa_watchlist.json")
+WATCH_FILE = os.path.join(BASE, "data", "watchlists.json")
 WATCH_REPORT_TIME = "18:00"   # default push otomatis (bisa diubah via .env)
 
 
-def load_watchlist():
+def _watch_num(jid):
+    """jid/phone -> nomor user (62xxxxxxxxxx)."""
+    return (jid or "").split("@")[0]
+
+
+def load_watchlists():
+    """Semua watchlist per-user: {nomor: [ticker, ...]}"""
     try:
         with open(WATCH_FILE) as f:
-            return json.load(f).get("tickers", [])
+            return json.load(f)
     except (OSError, json.JSONDecodeError):
-        return []
+        return {}
 
 
-def save_watchlist(tickers):
+def load_watchlist(number):
+    return sorted(load_watchlists().get(_watch_num(number), []))
+
+
+def save_watchlist(number, tickers):
+    allw = load_watchlists()
+    allw[_watch_num(number)] = sorted(set(tickers))
     with open(WATCH_FILE, "w") as f:
-        json.dump({"tickers": sorted(set(tickers))}, f)
+        json.dump(allw, f, indent=1)
 
 
 def _parse_tickers(text):
@@ -311,9 +345,9 @@ def ticker_track(ticker):
         return 0, 0
 
 
-def format_watch_report(payload):
-    """Laporan status semua saham di watchlist -> (teks, error)."""
-    watch = load_watchlist()
+def format_watch_report(payload, number):
+    """Laporan status watchlist milik satu user -> (teks, error)."""
+    watch = load_watchlist(number)
     if not watch:
         return None, ("📭 Watchlist masih kosong. Ketik: `watch TLKM,BBRI,ASII` "
                       "untuk menetapkan.")
@@ -344,7 +378,8 @@ def format_watch_report(payload):
 
 
 def report_worker(client, allowed, report_time):
-    """Thread: kirim laporan watchlist otomatis tiap hari jam tertentu."""
+    """Thread: kirim laporan watchlist otomatis tiap hari jam tertentu.
+    Setiap user menerima laporan watchlist-nya MASING-MASING."""
     last_sent = ""
     while True:
         try:
@@ -352,13 +387,13 @@ def report_worker(client, allowed, report_time):
             today = datetime.now().strftime("%Y-%m-%d")
             if now >= report_time and last_sent != today:
                 payload, err = load_predictions()
-                if not err and load_watchlist():
-                    text, _ = format_watch_report(payload)
-                    if text:
-                        for num in allowed:
-                            client.send_message(f"{num}@s.whatsapp.net", text)
-                        log(f"Laporan watchlist otomatis terkirim ({report_time}) "
-                            f"ke {sorted(allowed)}")
+                if not err:
+                    for num in allowed:
+                        if load_watchlist(num):
+                            text, _ = format_watch_report(payload, num)
+                            if text:
+                                client.send_message(f"{num}@s.whatsapp.net", text)
+                                log(f"Laporan otomatis ({report_time}) -> {num}")
                 last_sent = today
         except Exception as e:
             log(f"⚠️ Laporan otomatis gagal: {e}")
@@ -560,7 +595,7 @@ HELP_TEXT = (
 
 
 def handle_watch(client, cmd, jid):
-    """Kelola watchlist: watch / watch_show / watch_add / watch_del."""
+    """Kelola watchlist per-user: watch / watch_show / watch_add / watch_del."""
     kind, arg = cmd
     if kind == "watch":
         tks = _parse_tickers(arg)
@@ -568,16 +603,16 @@ def handle_watch(client, cmd, jid):
             client.send_message(jid, "Format: `watch TLKM,BBRI,ASII` "
                                       "(kode saham dipisah koma)")
         else:
-            save_watchlist(tks)
+            save_watchlist(jid, tks)
             client.send_message(jid,
                 f"📌 Watchlist disetel: {', '.join(tks)}\n"
                 f"Ketik `lapor` utk laporan status, atau `tambah`/`hapus` utk ubah.")
             log(f"-> {jid}: watch set {tks}")
     elif kind == "watch_show":
-        w = load_watchlist()
+        w = load_watchlist(jid)
         if w:
             client.send_message(jid,
-                f"📌 Watchlist saat ini: {', '.join(w)}\n"
+                f"📌 Watchlist kamu: {', '.join(w)}\n"
                 f"(`watch A,B,C` utk ganti total, `lapor` utk laporan)")
         else:
             client.send_message(jid,
@@ -588,21 +623,21 @@ def handle_watch(client, cmd, jid):
         if not tks:
             client.send_message(jid, "Format: `tambah TLKM,BBRI`")
             return
-        new = sorted(set(load_watchlist() + tks))
-        save_watchlist(new)
+        new = sorted(set(load_watchlist(jid) + tks))
+        save_watchlist(jid, new)
         client.send_message(jid,
             f"➕ Ditambahkan: {', '.join(tks)}\n"
-            f"📌 Watchlist: {', '.join(new)}")
+            f"📌 Watchlist kamu: {', '.join(new)}")
         log(f"-> {jid}: watch add {tks}")
     elif kind == "watch_del":
         tks = _parse_tickers(arg)
-        cur = load_watchlist()
+        cur = load_watchlist(jid)
         removed = [t for t in tks if t in cur]
         new = [t for t in cur if t not in tks]
-        save_watchlist(new)
+        save_watchlist(jid, new)
         client.send_message(jid,
             f"➖ Dihapus: {', '.join(removed) if removed else 'tidak ada'}\n"
-            f"📌 Watchlist: {', '.join(new) if new else '(kosong)'}")
+            f"📌 Watchlist kamu: {', '.join(new) if new else '(kosong)'}")
         log(f"-> {jid}: watch del {removed}")
 
 
@@ -631,7 +666,7 @@ def handle_command(client, msg, env):
     stale = check_freshness(payload)
 
     if cmd[0] == "lapor":
-        text, err = format_watch_report(payload)
+        text, err = format_watch_report(payload, jid)
         if err:
             client.send_message(jid, err)
         else:
@@ -658,6 +693,144 @@ def handle_command(client, msg, env):
     elif cmd[0] == "help":
         client.send_message(jid, HELP_TEXT)
         log(f"-> {jid}: help dikirim ({_t.time()-t0:.1f}s)")
+
+
+# ---------------------------------------------------------------- pesan masuk
+class MessageProcessor:
+    """Proses satu pesan masuk — dipakai bersama oleh polling & webhook."""
+
+    def __init__(self, client, env, allowed, seen, cutoff):
+        self.client = client
+        self.env = env
+        self.allowed = allowed
+        self.seen = seen
+        self.cutoff = cutoff
+
+    def handle(self, m, jid=None):
+        mid = m.get("id")
+        if not mid or mid in self.seen or m.get("is_from_me"):
+            return False
+        sender = (m.get("sender_jid") or jid or "").split("@")[0]
+        if sender not in self.allowed:
+            return False
+        # lewati pesan lama (sebelum bot mulai / run sebelumnya)
+        try:
+            ts = datetime.fromisoformat(
+                (m.get("timestamp") or "").replace("Z", "+00:00"))
+            if ts < self.cutoff:
+                self.seen.add(mid)
+                return False
+        except (ValueError, TypeError):
+            pass
+        self.seen.add(mid)
+        content = (m.get("content") or "").strip()
+        log(f"Pesan baru dari {sender}: {content[:60]!r}")
+        if parse_command(content):
+            self.client.send_typing(jid or f"{sender}@s.whatsapp.net", "start")
+            try:
+                handle_command(self.client, m, self.env)
+            finally:
+                self.client.send_typing(jid or f"{sender}@s.whatsapp.net", "stop")
+        else:
+            log(f"-> {sender}: bukan perintah, diabaikan (tanpa balasan)")
+        return True
+
+
+# ---------------------------------------------------------------- webhook
+def _deep_get(d, *paths):
+    """Ambil nilai dari dict lewat beberapa jalur alternatif (defensive)."""
+    for path in paths:
+        node = d
+        ok = True
+        for k in path:
+            if isinstance(node, dict) and k in node and node[k] is not None:
+                node = node[k]
+            else:
+                ok = False
+                break
+        if ok and node is not None:
+            return node
+    return None
+
+
+def parse_webhook_message(raw):
+    """Ekstrak pesan dari payload webhook chatetin (format fleksibel).
+    Normalisasi ke bentuk yg sama dgn pesan polling:
+    {id, chat_jid, sender_jid, content, timestamp, is_from_me}"""
+    if not isinstance(raw, dict):
+        return None
+    event = _deep_get(raw, ("event",), ("type",), ("event_type",))
+    if event and not any(x in str(event).lower()
+                         for x in ("message", "chat")):
+        return None  # event presence/dll -> abaikan
+    m = {}
+    m["id"] = _deep_get(raw, ("data", "id"), ("message", "id"), ("id",),
+                         ("data", "message", "id"), ("message_id",))
+    m["content"] = _deep_get(raw, ("data", "content"), ("message", "content"),
+                              ("content",), ("data", "message", "text"),
+                              ("data", "text"), ("text",),
+                              ("message", "body"), ("body",))
+    m["chat_jid"] = _deep_get(raw, ("data", "chat_jid"), ("message", "chat_jid"),
+                               ("chat_jid",), ("data", "chatId"), ("chatId",),
+                               ("data", "from"), ("from",), ("jid",))
+    m["sender_jid"] = _deep_get(raw, ("data", "sender_jid"),
+                                 ("message", "sender_jid"), ("sender_jid",),
+                                 ("data", "sender"), ("sender",),
+                                 ("data", "senderId"), ("senderId",),
+                                 ("data", "author"), ("author",))
+    m["timestamp"] = _deep_get(raw, ("data", "timestamp"),
+                                ("message", "timestamp"), ("timestamp",),
+                                ("data", "ts"), ("ts",))
+    is_me = _deep_get(raw, ("data", "is_from_me"), ("message", "is_from_me"),
+                      ("is_from_me",), ("data", "fromMe"), ("fromMe",))
+    m["is_from_me"] = bool(is_me)
+    if not m["content"] and not m["id"]:
+        return None
+    return m
+
+
+def start_webhook_server(port, processor, secret):
+    """HTTP server kecil: terima POST webhook dari chatetin."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                hdr = (self.headers.get("X-Webhook-Secret")
+                       or self.headers.get("X-Secret") or "")
+                if secret and hdr != secret:
+                    self.send_response(401)
+                    self.end_headers()
+                    return
+                raw = json.loads(body or b"{}")
+                log(f"Webhook POST: {str(raw)[:200]}")
+                m = parse_webhook_message(raw)
+                if m:
+                    processor.handle(m)
+                self.send_response(200)
+            except Exception as e:
+                log(f"Webhook error: {e}")
+                self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def do_GET(self):
+            if self.path == "/health":
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"ok")
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("0.0.0.0", port), H)
+    log(f"Webhook server aktif di port {port} (path POST bebas, /health utk cek)")
+    srv.serve_forever()
 
 
 def main():
@@ -723,6 +896,38 @@ def main():
                      daemon=True).start()
     log(f"Laporan watchlist otomatis: setiap hari {report_time} WIB")
 
+    processor = MessageProcessor(client, env, allowed, seen, cutoff)
+    webhook_url = env.get("WEBHOOK_URL", "").strip()
+
+    if webhook_url:
+        # ---------- MODE WEBHOOK (skala besar: hemat API, tanpa polling) ----------
+        webhook_port = int(env.get("WEBHOOK_PORT", "8080"))
+        webhook_secret = env.get("WEBHOOK_SECRET", "").strip()
+        try:
+            client.register_webhook(webhook_url, events="message",
+                                    secret=webhook_secret)
+            log(f"Webhook terdaftar ke chatetin: {webhook_url}")
+        except Exception as e:
+            log(f"⚠️ Gagal daftar webhook: {e}")
+        threading.Thread(target=start_webhook_server,
+                         args=(webhook_port, processor, webhook_secret),
+                         daemon=True).start()
+        log(f"Mode WEBHOOK aktif (port {webhook_port}) — polling dimatikan "
+            f"(hemat API utk skala banyak user)")
+        if args.once:
+            time.sleep(3)
+            return
+        # loop utama: jaga proses hidup + verifikasi rekam jejak berkala
+        while True:
+            time.sleep(3600)
+            try:
+                track = verify_and_record()
+                if track:
+                    log(track)
+            except Exception as e:
+                log(f"⚠️ Verifikasi berkala gagal: {e}")
+        # ----------------------------------------------------------------
+
     last_state_write = 0.0
     while True:
         try:
@@ -734,32 +939,7 @@ def main():
                 except requests.HTTPError:
                     continue  # chat belum ada -> belum ada pesan
                 for m in msgs:
-                    mid = m.get("id")
-                    if mid in seen or m.get("is_from_me"):
-                        continue
-                    sender = (m.get("sender_jid") or "").split("@")[0]
-                    if sender not in allowed:
-                        continue
-                    # lewati pesan lama (sebelum bot mulai / run sebelumnya)
-                    try:
-                        ts = datetime.fromisoformat(
-                            (m.get("timestamp") or "").replace("Z", "+00:00"))
-                        if ts < cutoff:
-                            seen.add(mid)
-                            continue
-                    except ValueError:
-                        pass
-                    seen.add(mid)
-                    content = (m.get("content") or "").strip()
-                    log(f"Pesan baru dari {sender}: {content[:60]!r}")
-                    if parse_command(content):
-                        client.send_typing(jid, "start")   # indikator mengetik
-                        try:
-                            handle_command(client, m, env)
-                        finally:
-                            client.send_typing(jid, "stop")
-                    else:
-                        log(f"-> {sender}: bukan perintah, diabaikan (tanpa balasan)")
+                    processor.handle(m, jid)
             # simpan state bila ada perubahan / tiap 60 detik
             now_ts = time.time()
             if seen or now_ts - last_state_write >= 60:

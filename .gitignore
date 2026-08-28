@@ -45,3 +45,5 @@ data/wa_bot_stdout.log
 data/bot_track_record.csv
 data/prediction_archive.csv
 data/wa_watchlist.json
+data/watchlists.json
+data/.predict_daily.lock

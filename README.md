@@ -65,6 +65,7 @@ ketik `lapor` kapan saja, atau biarkan bot **push laporan otomatis tiap hari**
 (default 18:00 WIB, ubah via `WATCH_REPORT_TIME` di `.env`; kosongkan utk
 nonaktif). Laporan berisi harga terakhir, prediksi besok, likuiditas, dan
 rekam jejak per saham. Catatan: data **harian**, bukan harga real-time.
+Watchlist **per-user** (tiap nomor punya daftar sendiri).
 
 ```bash
 # Setup (sekali)
@@ -83,6 +84,29 @@ journalctl --user -u wa_bot.service -f   # lihat log
 File terkait: `wa_bot.py`, `.env.example`, `run_bot.sh`, `wa_bot.service`,
 log di `data/wa_bot.log`.
 
+## 🖥️ Deploy ke VPS (skala banyak user)
+
+```bash
+bash install.sh   # install deps (tanpa torch), .env, systemd, cron
+```
+
+**Dua mode pesan masuk** (pilih di `.env`):
+
+| Mode | Cara kerja | Cocok utk |
+|---|---|---|
+| **Polling** (default) | Bot cek pesan tiap `POLL_INTERVAL` detik | 1–10 user |
+| **Webhook** | chatetin POST event pesan ke `WEBHOOK_URL` bot | puluhan–ratusan user |
+
+Mode webhook: isi `WEBHOOK_URL` (alamat publik VPS, port `WEBHOOK_PORT`,
+default 8080) → bot daftarkan webhook ke chatetin & matikan polling.
+Endpoint `/health` utk cek server. Opsional `WEBHOOK_SECRET` utk verifikasi
+header `X-Webhook-Secret`.
+
+**Catatan skala**: model cross-sectional = retrain 1×/hari utk SEMUA user
+(peak RAM ±2 GB, muat di VPS 8 GB). Beban per-user hanya pesan masuk/balasan.
+`predict_daily.py` memakai lock anti-bentrok + tulis file atomik, dan
+`_request` punya backoff exponensial utk rate-limit (429/5xx).
+
 ## 📁 Struktur proyek
 
 | Script | Fungsi |
@@ -99,6 +123,7 @@ log di `data/wa_bot.log`.
 | `predict_daily.py` | **Pipeline produksi**: retrain + prediksi besok semua saham |
 | `wa_bot.py` | **Bot WhatsApp**: balas `prediksi`/`top N`/`cek KODE` (filter likuid + rekam jejak) |
 | `backtest_top20.py` | Backtest jujur strategi top-20 (likuiditas + biaya) |
+| `install.sh` | Skrip deploy VPS (deps, .env, systemd, cron) |
 | `CONVERSATION.md` | Catatan percakapan & seluruh eksperimen |
 | `CHANGELOG.md` | Riwayat versi |
 
