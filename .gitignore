@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+
+# Data besar (bisa diregenerate via get_history_id.py)
+data/history/
+data/features.db
+data/features_macro.db
+data/history_id_5y.parquet
+data/history_id_5y.csv
+data/model_daily.ubj
+data/model_lstm.pt
+data/model_xgb_direction.json
+data/lstm_test_probs.csv
+data/walkforward_preds.csv
+data/xgb_macro_test_probs.csv
+data/per_stock_walkforward_preds.csv
+data/feature_importance.png
+
+# Log
+*.log
+data/cron.log
+
+# Kredensial & konfigurasi lokal
+.env
+.env.local
+config.local.json
+
+# Contoh output prediksi (biarkan versi terbaru saja via contoh kecil)
+data/predictions_tomorrow.json
+data/predictions_tomorrow.csv
+
+# OS
+.DS_Store
+Thumbs.db

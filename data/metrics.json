@@ -1,0 +1,50 @@
+{
+  "train": {
+    "threshold": 0.3,
+    "accuracy": 0.5294,
+    "precision": 0.4099,
+    "recall": 0.8485,
+    "f1": 0.5528,
+    "roc_auc": 0.672,
+    "n": 533469,
+    "base_rate_naik": 0.3428,
+    "baseline_accuracy": 0.6572
+  },
+  "test": {
+    "threshold": 0.3,
+    "accuracy": 0.4737,
+    "precision": 0.4085,
+    "recall": 0.8629,
+    "f1": 0.5545,
+    "roc_auc": 0.5977,
+    "n": 187855,
+    "base_rate_naik": 0.3795,
+    "baseline_accuracy": 0.6205
+  },
+  "test_threshold_50": {
+    "threshold": 0.5,
+    "accuracy": 0.6283,
+    "precision": 0.58,
+    "recall": 0.0744,
+    "f1": 0.1318,
+    "roc_auc": 0.5977,
+    "n": 187855,
+    "base_rate_naik": 0.3795,
+    "baseline_accuracy": 0.6205
+  },
+  "optimal_threshold": 0.3,
+  "best_iteration": 400,
+  "params": {
+    "objective": "binary:logistic",
+    "tree_method": "hist",
+    "max_depth": 6,
+    "learning_rate": 0.05,
+    "n_estimators": 2000,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 5,
+    "reg_lambda": 1.0,
+    "random_state": 42,
+    "early_stopping_rounds": 100
+  }
+}

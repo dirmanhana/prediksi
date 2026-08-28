@@ -1,0 +1,37 @@
+{
+  "n": 188323,
+  "base_rate_naik": 0.3839,
+  "xgb_walkforward": {
+    "auc": 0.5761,
+    "accuracy": 0.4618,
+    "precision": 0.4064,
+    "recall": 0.8733,
+    "f1": 0.5547,
+    "threshold": 0.3
+  },
+  "lstm": {
+    "auc": 0.5276,
+    "accuracy": 0.3968,
+    "precision": 0.3869,
+    "recall": 0.977,
+    "f1": 0.5543,
+    "threshold": 0.3
+  },
+  "ensemble_50_50": {
+    "auc": 0.5672,
+    "accuracy": 0.4137,
+    "precision": 0.3925,
+    "recall": 0.9628,
+    "f1": 0.5577,
+    "threshold": 0.3
+  },
+  "ensemble_best_weight": {
+    "weight_xgb": 0.8,
+    "auc": 0.5752,
+    "accuracy": 0.4412,
+    "precision": 0.4006,
+    "recall": 0.9179,
+    "f1": 0.5577,
+    "threshold": 0.3
+  }
+}

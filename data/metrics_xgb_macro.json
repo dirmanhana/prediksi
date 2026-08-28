@@ -1,0 +1,15 @@
+{
+  "test": {
+    "threshold": 0.3,
+    "accuracy": 0.4399,
+    "precision": 0.4004,
+    "recall": 0.9219,
+    "f1": 0.5583,
+    "roc_auc": 0.5805,
+    "n": 190110,
+    "base_rate_naik": 0.3839,
+    "baseline_accuracy": 0.6161
+  },
+  "optimal_threshold": 0.3,
+  "best_iteration": 49
+}

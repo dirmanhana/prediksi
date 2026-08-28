@@ -1,0 +1,8 @@
+{
+  "avg_auc_per_stock": 0.5057,
+  "median_auc_per_stock": 0.4883,
+  "aggregate_auc": 0.5063,
+  "strategy_beats_buyhold": 9,
+  "n_stocks": 19,
+  "cost_round_trip": 0.002
+}

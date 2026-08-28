@@ -1,0 +1,18 @@
+{
+  "model": "LSTM",
+  "auc_test": 0.5276,
+  "accuracy_test": 0.4004,
+  "f1_test": 0.5529,
+  "optimal_threshold": 0.31,
+  "best_valid_auc": 0.5505,
+  "params": {
+    "seq_len": 10,
+    "hidden": 48,
+    "layers": 2,
+    "batch": 1024,
+    "lr": 0.001,
+    "epochs": 15,
+    "device": "cpu"
+  },
+  "xgboost_auc_test": 0.5977
+}
