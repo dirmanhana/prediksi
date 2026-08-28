@@ -46,6 +46,7 @@ OUT_CSV = os.path.join(BASE, "data", "predictions_tomorrow.csv")
 OUT_JSON = os.path.join(BASE, "data", "predictions_tomorrow.json")
 OUT_MODEL = os.path.join(BASE, "data", "model_daily.json")
 LOG_CSV = os.path.join(BASE, "data", "prediction_log.csv")
+ARCHIVE = os.path.join(BASE, "data", "prediction_archive.csv")
 
 MACRO_COLS = [
     "ihsg_ret_1", "ihsg_ret_5", "ihsg_ret_20", "ihsg_sma20",
@@ -254,8 +255,9 @@ def train_and_predict(df, macro_df, meta):
             best_t, best_f1 = t, f1
     print(f"Threshold optimal (max F1): {best_t:.2f} (F1={best_f1:.4f})")
 
-    out = pred_df[["ticker", "tanggal", "close"]].copy()
+    out = pred_df[["ticker", "tanggal", "close", "volume"]].copy()
     out["prob_up"] = prob
+    out["value_traded"] = out["close"] * out["volume"]  # Rp, hari data terakhir
     out = out.merge(meta[["name", "description", "sector", "industry"]],
                     left_on="ticker", right_on="name", how="left")
     out["signal"] = np.where(out["prob_up"] >= best_t, "NAIK ▲", "TURUN ▼")
@@ -310,7 +312,8 @@ def main():
         "valid_auc": round(valid_auc, 4),
         "threshold_optimal": round(best_t, 2),
         "saham": out[["rank", "ticker", "description", "sector",
-                      "close", "prob_up", "signal", "confidence"]].to_dict(orient="records"),
+                      "close", "volume", "value_traded",
+                      "prob_up", "signal", "confidence"]].to_dict(orient="records"),
     }
     with open(OUT_JSON, "w") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -320,6 +323,23 @@ def main():
     with open(OUT_MODEL, "w") as f:
         json.dump({"feature_cols": cols, "trained_at": datetime.now().isoformat(),
                    "valid_auc": round(valid_auc, 4)}, f, indent=2)
+
+    # ---- arsip prediksi utk verifikasi harian (top-20 naik/turun LIKUID) ----
+    liq = out[(out["value_traded"] >= 1_000_000_000) & (out["close"] >= 200)]
+    pred_date = (out["tanggal"].max() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    data_until = out["tanggal"].max().strftime("%Y-%m-%d")
+    arch = pd.concat([
+        liq.head(20)[["ticker", "prob_up"]].assign(arah=1),
+        liq.tail(20)[["ticker", "prob_up"]].assign(arah=0),
+    ])
+    arch.insert(0, "tanggal_prediksi", pred_date)
+    arch.insert(1, "data_sampai", data_until)
+    if os.path.exists(ARCHIVE):
+        old = pd.read_csv(ARCHIVE, dtype={"ticker": str})
+        arch = pd.concat([old, arch]).drop_duplicates(
+            subset=["tanggal_prediksi", "ticker"], keep="last")
+    arch.to_csv(ARCHIVE, index=False)
+    print(f"Arsip prediksi: {len(arch):,} baris -> {ARCHIVE}")
 
     # log riwayat
     log = pd.DataFrame([{

@@ -163,6 +163,14 @@ class ChatetinClient:
 import re
 
 
+# Batas likuiditas minimal agar saham layak direkomendasikan
+MIN_VALUE_TRADED = 1_000_000_000   # Rp1 miliar / hari (nilai transaksi)
+MIN_PRICE = 200                    # Rp200 (hindari penny stock ekstrem)
+
+TRACK_FILE = os.path.join(BASE, "data", "bot_track_record.csv")
+HIST_DIR = os.path.join(BASE, "data", "history")
+
+
 def load_predictions():
     """Baca data prediksi terbaru. Return (payload, error)."""
     if not os.path.exists(PRED_FILE):
@@ -175,6 +183,18 @@ def load_predictions():
         return None, f"Gagal membaca prediksi: {e}"
 
 
+def is_liquid(item, min_value=MIN_VALUE_TRADED, min_price=MIN_PRICE):
+    """Saham layak rekomendasi: nilai transaksi & harga di atas ambang."""
+    val = item.get("value_traded") or 0
+    price = item.get("close") or 0
+    return val >= min_value and price >= min_price
+
+
+def liquid_saham(payload, min_value=MIN_VALUE_TRADED, min_price=MIN_PRICE):
+    """Daftar saham yang lolos filter likuiditas (urutan prob turun)."""
+    return [x for x in payload["saham"] if is_liquid(x, min_value, min_price)]
+
+
 def format_short(item, arrow=True):
     """Satu baris ringkas untuk daftar."""
     prob = item["prob_up"] * 100
@@ -185,29 +205,33 @@ def format_short(item, arrow=True):
 
 
 def format_top(payload, n=20):
-    """Top N NAIK + Top N TURUN dalam SATU pesan (cepat: 1x kirim)."""
+    """Top N NAIK + Top N TURUN — HANYA saham likuid, dalam SATU pesan."""
     saham = payload["saham"]
-    n = max(1, min(int(n), len(saham)))
+    liq = liquid_saham(payload)
+    n = max(1, min(int(n), len(liq)))
     tanggal = payload.get("tanggal_prediksi", "?")
     auc = payload.get("valid_auc", 0)
     jumlah = payload.get("jumlah_saham", len(saham))
 
-    top = saham[:n]
-    bottom = list(reversed(saham[-n:]))
+    top = liq[:n]
+    bottom = list(reversed(liq[-n:]))
+    filtered = len(saham) - len(liq)
 
     lines = [
         "📊 *PREDIKSI SAHAM IDX — BESOK*",
         f"📅 Prediksi untuk: {tanggal}",
-        f"🤖 XGBoost gabungan | {jumlah} saham | AUC {auc:.3f}",
+        f"🤖 XGBoost gabungan | {len(liq)} saham likuid (dari {jumlah}) | AUC {auc:.3f}",
         "————————————————",
-        f"🟢 *TOP {n} POTENSI NAIK ▲*",
+        f"🟢 *TOP {n} POTENSI NAIK ▲ (likuid)*",
     ] + [format_short(x) for x in top] + [
         "————————————————",
-        f"🔴 *TOP {n} POTENSI TURUN ▼*",
+        f"🔴 *TOP {n} POTENSI TURUN ▼ (likuid)*",
     ] + [format_short(x) for x in bottom] + [
         "————————————————",
-        "⚠️ Bukan saran investasi. AUC ~0.58 = sinyal lemah, gunakan bijak.",
     ]
+    if filtered:
+        lines.append(f"🔒 {filtered} saham illikuid/penny dikeluarkan (nilai < Rp1M atau harga < Rp200)")
+    lines.append("⚠️ Bukan saran investasi. AUC ~0.58 = sinyal lemah, gunakan bijak.")
     return "\n".join(lines)
 
 
@@ -222,10 +246,16 @@ def format_single(payload, ticker):
             sektor = x.get("sector") or "-"
             if ind:
                 sektor = f"{sektor} | {ind}"
+            val = (x.get("value_traded") or 0) / 1e9
+            liq_note = (f"💧 Nilai transaksi: Rp {val:,.2f} M/hari"
+                        f"\n🔒 *LIKUID* — layak diperdagangkan" if is_liquid(x)
+                        else f"💧 Nilai transaksi: Rp {val:,.3f} M/hari"
+                        f"\n⚠️ *ILLIKUID/penny* — sulit dieksekusi, hati-hati")
             return (
                 f"📊 *{x['ticker']}* — {x.get('description', '-')}\n"
                 f"🏭 Sektor: {sektor}\n"
                 f"💵 Close terakhir: Rp {x['close']:,.0f}\n"
+                f"{liq_note}\n"
                 f"🎯 Probabilitas NAIK besok: {p:.1f}%\n"
                 f"📈 Sinyal: {x['signal']}\n"
                 f"🎚 Confidence: {conf:.1f}%\n"
@@ -233,6 +263,133 @@ def format_single(payload, ticker):
                 f"⚠️ Bukan saran investasi."
             ), None
     return None, f"❌ Kode *{ticker}* tidak ditemukan. Contoh: `cek BBRI`"
+
+
+# ---------------------------------------------------------------- verifikasi harian
+ARCHIVE = os.path.join(BASE, "data", "prediction_archive.csv")
+
+
+def _read_history_for(tickers):
+    """Baca close utk ticker tertentu — prioritas parquet (cepat), fallback CSV."""
+    try:
+        import pandas as pd
+        pq = os.path.join(BASE, "data", "history_id_5y.parquet")
+        if os.path.exists(pq):
+            h = pd.read_parquet(pq, columns=["ticker", "tanggal", "close"])
+            h = h[h["ticker"].isin(tickers)]
+            return h
+    except Exception:
+        pass
+    frames = []
+    for tk in tickers:
+        path = os.path.join(HIST_DIR, f"{tk}.csv")
+        if os.path.exists(path):
+            try:
+                frames.append(pd.read_csv(path, usecols=["ticker", "tanggal", "close"],
+                                          parse_dates=["tanggal"]))
+            except Exception:
+                pass
+    if frames:
+        return pd.concat(frames, ignore_index=True)
+    return None
+
+
+def verify_and_record(payload=None):
+    """Verifikasi prediksi lama (dari arsip) vs aktual, catat ke TRACK_FILE.
+    Prediksi terverifikasi: tanggal_prediksi sudah lewat & ada close aktual."""
+    import pandas as pd
+    if not os.path.exists(ARCHIVE):
+        return summarize_track()
+    try:
+        arch = pd.read_csv(ARCHIVE, dtype={"ticker": str})
+        if arch.empty:
+            return summarize_track()
+        arch["tanggal_prediksi"] = pd.to_datetime(arch["tanggal_prediksi"])
+        arch["data_sampai"] = pd.to_datetime(arch["data_sampai"])
+    except Exception as e:
+        log(f"Baca arsip gagal: {e}")
+        return summarize_track()
+
+    # sudah terverifikasi sebelumnya?
+    done = set()
+    if os.path.exists(TRACK_FILE):
+        try:
+            old = pd.read_csv(TRACK_FILE)
+            done = set(zip(old["tanggal_prediksi"], old["ticker"]))
+        except Exception:
+            done = set()
+
+    # baris yang belum diverifikasi & tanggalnya sudah lewat
+    todo = arch[~arch.apply(lambda r: (str(r.tanggal_prediksi.date()), r.ticker) in done,
+                            axis=1)].copy()
+    if todo.empty:
+        return summarize_track()
+
+    hist = _read_history_for(todo["ticker"].unique().tolist())
+    if hist is None or hist.empty:
+        return summarize_track()
+    hist = hist.sort_values(["ticker", "tanggal"])
+
+    new_rows = []
+    for r in todo.itertuples():
+        h = hist[hist["ticker"] == r.ticker]
+        if h.empty:
+            continue
+        # close di hari data (c0) dan hari trading BERIKUTNYA (c1)
+        hh = h[h["tanggal"] <= r.data_sampai]
+        if hh.empty:
+            continue
+        c0_date, c0 = hh.iloc[-1]["tanggal"], hh.iloc[-1]["close"]
+        nxt = h[h["tanggal"] > c0_date]
+        if nxt.empty:
+            continue  # belum ada hari berikutnya (prediksi belum jatuh tempo)
+        c1_date, c1 = nxt.iloc[0]["tanggal"], nxt.iloc[0]["close"]
+        # hanya verifikasi kalau hari berikutnya sudah lewat (data nyata)
+        if c1_date > pd.Timestamp.today():
+            continue
+        aktual = 1 if c1 > c0 else 0
+        new_rows.append({
+            "tanggal_prediksi": str(r.tanggal_prediksi.date()),
+            "data_sampai": str(r.data_sampai.date()),
+            "ticker": r.ticker, "arah": int(r.arah),
+            "prob_up": round(float(r.prob_up), 4),
+            "aktual_naik": aktual,
+        })
+
+    if new_rows:
+        df = pd.DataFrame(new_rows)
+        if os.path.exists(TRACK_FILE):
+            old = pd.read_csv(TRACK_FILE)
+            df = pd.concat([old, df]).drop_duplicates(
+                subset=["tanggal_prediksi", "ticker"], keep="last")
+        df.to_csv(TRACK_FILE, index=False)
+        log(f"Verifikasi: {len(new_rows)} prediksi baru tercatat (total {len(df)})")
+    return summarize_track()
+
+
+def summarize_track():
+    """Rekam jejak: berapa % rekomendasi top-20 NAIK yang benar-benar naik."""
+    if not os.path.exists(TRACK_FILE):
+        return None
+    try:
+        import pandas as pd
+        df = pd.read_csv(TRACK_FILE)
+        if df.empty:
+            return None
+        up = df[(df["arah"] == 1) & (df["aktual_naik"].notna())]
+        dn = df[(df["arah"] == 0) & (df["aktual_naik"].notna())]
+        if up.empty and dn.empty:
+            return None
+        days = df["tanggal_prediksi"].nunique()
+        s = ["🎯 *Rekam jejak bot*"]
+        if not up.empty:
+            s.append(f"  NAIK ▲: {(up['aktual_naik']==1).sum()}/{len(up)} benar ({up['aktual_naik'].mean()*100:.0f}%)")
+        if not dn.empty:
+            s.append(f"  TURUN ▼: {((dn['aktual_naik']==0)).sum()}/{len(dn)} benar ({((dn['aktual_naik']==0)).mean()*100:.0f}%)")
+        s.append(f"  ({days} hari terverifikasi, s/d {df['tanggal_prediksi'].max()})")
+        return "\n".join(s)
+    except Exception:
+        return None
 
 
 def check_freshness(payload):
@@ -279,10 +436,11 @@ def parse_command(content):
 HELP_TEXT = (
     "🤖 *Bot Prediksi Saham IDX*\n"
     "Perintah yang tersedia:\n"
-    "• `prediksi` / `top 20` — Top 20 potensi NAIK & TURUN besok\n"
+    "• `prediksi` / `top 20` — Top 20 potensi NAIK & TURUN besok (saham LIKUID saja)\n"
     "• `top 5` / `top 10` — Top N sesuai angka\n"
-    "• `cek BBRI` — detail 1 saham (contoh: `cek BBRI`)\n"
+    "• `cek BBRI` — detail 1 saham (likuiditas + probabilitas)\n"
     "• `help` — menu ini\n\n"
+    "🔒 Saham illikuid/penny dikeluarkan otomatis dari daftar.\n"
     "⚠️ Hasil bukan saran investasi."
 )
 
@@ -309,6 +467,9 @@ def handle_command(client, msg, env):
     if cmd[0] == "top":
         n = cmd[1]
         text = format_top(payload, n) + stale
+        track = summarize_track()
+        if track:
+            text += "\n\n" + track
         client.send_message(jid, text)
         log(f"-> {jid}: top {n} dikirim ({_t.time()-t0:.1f}s)")
 
@@ -341,6 +502,11 @@ def main():
     interval = float(env.get("POLL_INTERVAL", DEFAULT_INTERVAL))
     allowed = {n.strip() for n in allowed_raw.split(",") if n.strip()}
 
+    # ambang likuiditas (bisa diubah via .env)
+    global MIN_VALUE_TRADED, MIN_PRICE
+    MIN_VALUE_TRADED = float(env.get("MIN_VALUE_TRADED", MIN_VALUE_TRADED))
+    MIN_PRICE = float(env.get("MIN_PRICE", MIN_PRICE))
+
     if not user or not pwd:
         sys.exit("Isi CHATETIN_USERNAME & CHATETIN_PASSWORD di file .env "
                  "(lihat .env.example)")
@@ -354,6 +520,11 @@ def main():
     client.login()
     dev = client.get_device()
     log(f"Device terhubung: {dev.get('display_name')} ({dev.get('jid')})")
+
+    # verifikasi prediksi kemarin vs aktual + rekam jejak (tiap start bot)
+    track = verify_and_record()
+    if track:
+        log(track)
 
     # state pesan yang sudah diproses (anti double-reply)
     seen = set()

@@ -38,3 +38,9 @@ data/predictions_tomorrow.csv
 Thumbs.db
 data/wa_bot_state.json
 data/wa_bot_stdout.log
+
+# State runtime bot (ter-regenerate otomatis)
+data/wa_bot_state.json
+data/wa_bot_stdout.log
+data/bot_track_record.csv
+data/prediction_archive.csv
