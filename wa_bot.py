@@ -293,6 +293,51 @@ def format_single(payload, ticker):
 # ---------------------------------------------------------------- verifikasi harian
 ARCHIVE = os.path.join(BASE, "data", "prediction_archive.csv")
 
+# ---------------------------------------------------------------- allowed numbers (admin)
+ALLOWED_FILE = os.path.join(BASE, "data", "allowed_numbers.json")
+BOT_ADMINS = "6285720300059,6285780535433"   # bisa diubah via .env BOT_ADMINS
+
+
+def load_admins(env=None):
+    """Nomor admin yang boleh mengelola daftar user (dari .env BOT_ADMINS)."""
+    raw = (env or {}).get("BOT_ADMINS", "") or BOT_ADMINS
+    return {n.strip() for n in raw.split(",") if n.strip()}
+
+
+def load_allowed_numbers():
+    """Nomor yang diizinkan chat ke bot (file JSON dinamis).
+    Kalau file belum ada -> seed dari .env ALLOWED_NUMBERS."""
+    if not os.path.exists(ALLOWED_FILE):
+        # seed sekali dari env (utk kompatibilitas konfigurasi lama)
+        env = load_env()
+        raw = env.get("ALLOWED_NUMBERS", DEFAULT_ALLOWED)
+        nums = {n.strip() for n in raw.split(",") if n.strip()}
+        save_allowed_numbers(nums)
+        return nums | load_admins(env)
+    try:
+        with open(ALLOWED_FILE) as f:
+            return set(json.load(f).get("allowed", [])) | load_admins()
+    except (OSError, json.JSONDecodeError):
+        return {DEFAULT_ALLOWED} | load_admins()
+
+
+def save_allowed_numbers(nums):
+    with open(ALLOWED_FILE, "w") as f:
+        json.dump({"allowed": sorted(set(nums))}, f, indent=1)
+
+
+def _validate_phone(num):
+    """Validasi nomor WA Indonesia: 62 + 8-12 digit."""
+    num = num.strip().replace(" ", "").replace("-", "")
+    if num.startswith("+"):
+        num = num[1:]
+    if num.startswith("08"):
+        num = "62" + num[1:]
+    if num.startswith("8"):
+        num = "62" + num
+    return num if re.fullmatch(r"62\d{8,12}", num) else None
+
+
 # ---------------------------------------------------------------- watchlist
 WATCH_FILE = os.path.join(BASE, "data", "watchlists.json")
 WATCH_REPORT_TIME = "18:00"   # default push otomatis (bisa diubah via .env)
@@ -380,9 +425,10 @@ def format_watch_report(payload, number):
     return "\n".join(lines), None
 
 
-def report_worker(client, allowed, report_time):
+def report_worker(client, report_time):
     """Thread: kirim laporan watchlist otomatis tiap hari jam tertentu.
-    Setiap user menerima laporan watchlist-nya MASING-MASING."""
+    Setiap user menerima laporan watchlist-nya MASING-MASING
+    (daftar user dibaca dinamis via load_allowed_numbers)."""
     last_sent = ""
     while True:
         try:
@@ -391,7 +437,7 @@ def report_worker(client, allowed, report_time):
             if now >= report_time and last_sent != today:
                 payload, err = load_predictions()
                 if not err:
-                    for num in allowed:
+                    for num in load_allowed_numbers():
                         if load_watchlist(num):
                             text, _ = format_watch_report(payload, num)
                             if text:
@@ -562,6 +608,16 @@ def parse_command(content):
     m = re.match(r"^(?:cek|/cek|cari|prediksi|rekomendasi)\s+([a-z0-9.]+)$", low)
     if m:
         return ("cek", m.group(1))
+    # admin: kelola daftar user yang diizinkan (hanya utk nomor admin)
+    m = re.match(r"^(?:add user|tambah user|izin|tambah nomor|daftarkan)\s+(.+)$", low)
+    if m:
+        return ("admin_add", m.group(1))
+    m = re.match(r"^(?:hapus user|remove user|cabut|hapus nomor)\s+(.+)$", low)
+    if m:
+        return ("admin_del", m.group(1))
+    if low in ("daftar user", "list user", "users", "daftar nomor",
+               "list nomor", "daftar allowed"):
+        return ("admin_list", None)
     # watchlist: watch TLKM,BBRI / tambah / hapus / lapor
     m = re.match(r"^(?:watch|pantau|set watch|set pantau)\s+(.+)$", low)
     if m:
@@ -598,6 +654,8 @@ HELP_TEXT = (
     "• `lapor` — laporan status semua saham watchlist\n"
     "• `update` / `refresh` — ambil data terbaru + retrain (jika data basi)\n"
     "• `help` — menu ini\n\n"
+    "👑 *Perintah admin* (hanya nomor admin):\n"
+    "• `tambah user 628xxxx` / `hapus user 628xxxx` / `daftar user`\n\n"
     "🔔 Laporan watchlist otomatis dikirim tiap hari (lihat WATCH_REPORT_TIME di .env).\n"
     "🔒 Saham illikuid/penny dikeluarkan otomatis dari daftar.\n"
     "⚠️ Hasil bukan saran investasi."
@@ -708,6 +766,64 @@ def handle_command(client, msg, env):
         handle_refresh(client, jid, payload)
         log(f"-> {jid}: update data diminta ({_t.time()-t0:.1f}s)")
 
+    elif cmd[0] in ("admin_add", "admin_del", "admin_list"):
+        handle_admin(client, cmd, jid, env)
+        log(f"-> {jid}: admin {cmd[0]} ({_t.time()-t0:.1f}s)")
+
+
+# ---------------------------------------------------------------- admin whitelist
+def handle_admin(client, cmd, jid, env):
+    """Kelola daftar user yang diizinkan — HANYA utk nomor admin."""
+    sender = (jid or "").split("@")[0]
+    admins = load_admins(env)
+    if sender not in admins:
+        client.send_message(jid,
+            "⛔ Akses ditolak — hanya nomor admin yang bisa kelola daftar user.")
+        log(f"-> {sender}: coba akses admin DITOLAK")
+        return
+    kind, arg = cmd
+
+    if kind == "admin_add":
+        nums = [_validate_phone(n) for n in arg.split(",")]
+        nums = [n for n in nums if n]
+        if not nums:
+            client.send_message(jid,
+                "Format: `tambah user 6281234567890` (boleh beberapa, pisah koma)")
+            return
+        cur = load_allowed_numbers()
+        new = sorted(cur | set(nums))
+        save_allowed_numbers(new)
+        client.send_message(jid,
+            f"✅ Nomor ditambahkan: {', '.join(nums)}\n"
+            f"📋 User diizinkan ({len(new)}): {', '.join(sorted(new))}")
+        log(f"Admin {sender} tambah user: {nums}")
+
+    elif kind == "admin_del":
+        nums = [_validate_phone(n) for n in arg.split(",")]
+        nums = [n for n in nums if n]
+        cur = load_allowed_numbers()
+        admins = load_admins(env)
+        removed = [n for n in nums if n in cur]
+        kept = [n for n in cur if n not in nums or n in admins]  # admin tak bisa dihapus
+        save_allowed_numbers(kept)
+        msg = f"➖ Dihapus: {', '.join(removed) if removed else 'tidak ada'}"
+        blocked = [n for n in nums if n in admins]
+        if blocked:
+            msg += f"\n⛔ Nomor admin tidak bisa dihapus: {', '.join(blocked)}"
+        msg += f"\n📋 User diizinkan ({len(kept)}): {', '.join(sorted(kept))}"
+        client.send_message(jid, msg)
+        log(f"Admin {sender} hapus user: {removed}")
+
+    elif kind == "admin_list":
+        cur = load_allowed_numbers()
+        admins = load_admins(env)
+        regular = sorted(cur - admins)
+        client.send_message(jid,
+            f"📋 *DAFTAR USER YANG DIIZINKAN* ({len(cur)})\n"
+            f"👑 Admin: {', '.join(sorted(admins))}\n"
+            f"👤 User: {', '.join(regular) if regular else '(belum ada)'}")
+        log(f"Admin {sender} lihat daftar user")
+
 
 # ---------------------------------------------------------------- update data
 def data_is_current(payload, max_gap_days=3):
@@ -779,10 +895,9 @@ def handle_refresh(client, jid, payload):
 class MessageProcessor:
     """Proses satu pesan masuk — dipakai bersama oleh polling & webhook."""
 
-    def __init__(self, client, env, allowed, seen, cutoff):
+    def __init__(self, client, env, seen, cutoff):
         self.client = client
         self.env = env
-        self.allowed = allowed
         self.seen = seen
         self.cutoff = cutoff
 
@@ -791,7 +906,7 @@ class MessageProcessor:
         if not mid or mid in self.seen or m.get("is_from_me"):
             return False
         sender = (m.get("sender_jid") or jid or "").split("@")[0]
-        if sender not in self.allowed:
+        if sender not in load_allowed_numbers():  # dinamis (bisa ditambah via admin)
             return False
         # lewati pesan lama (sebelum bot mulai / run sebelumnya)
         try:
@@ -966,17 +1081,18 @@ def main():
         except (json.JSONDecodeError, OSError, ValueError):
             pass
     log(f"Pemantauan dimulai | interval {interval:.0f}s | "
-        f"nomor diizinkan: {sorted(allowed)} | pesan lama sebelum {cutoff.isoformat()} diabaikan")
+        f"nomor diizinkan: {sorted(load_allowed_numbers())} | "
+        f"pesan lama sebelum {cutoff.isoformat()} diabaikan")
 
     # thread laporan watchlist otomatis harian
     report_time = env.get("WATCH_REPORT_TIME", WATCH_REPORT_TIME)
     import threading
     threading.Thread(target=report_worker,
-                     args=(client, sorted(allowed), report_time),
+                     args=(client, report_time),
                      daemon=True).start()
     log(f"Laporan watchlist otomatis: setiap hari {report_time} WIB")
 
-    processor = MessageProcessor(client, env, allowed, seen, cutoff)
+    processor = MessageProcessor(client, env, seen, cutoff)
     webhook_url = env.get("WEBHOOK_URL", "").strip()
 
     if webhook_url:
@@ -1011,8 +1127,8 @@ def main():
     last_state_write = 0.0
     while True:
         try:
-            # polling langsung ke jid nomor yang diizinkan (tanpa list semua chat)
-            for number in allowed:
+            # polling langsung ke jid nomor yang diizinkan (dinamis, tanpa list semua chat)
+            for number in load_allowed_numbers():
                 jid = f"{number}@s.whatsapp.net"
                 try:
                     msgs = client.chat_messages(jid, limit=10)

@@ -2,6 +2,20 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.8.1] — 2026-08-28
+### Added
+- **Admin whitelist dari WhatsApp**: nomor admin (`BOT_ADMINS` di `.env`,
+default 6285720300059 & 6285780535433) bisa menambah/menghapus nomor yang
+  diizinkan langsung dari chat — tanpa edit file/restart:
+  - `tambah user 628xxx` / `hapus user 628xxx` / `daftar user`
+  - User baru langsung aktif; nomor admin tidak bisa dihapus.
+- Daftar diizinkan kini dinamis (`data/allowed_numbers.json`, seed dari
+  `.env`); dipakai polling, webhook, laporan otomatis, dan verifikasi.
+- Validasi format nomor Indonesia (62/08/+62/8xxxx → 62xxxxxxxxxx).
+
+### Security
+- Perintah admin hanya berlaku utk nomor di `BOT_ADMINS`; selain itu ditolak.
+
 ## [v0.8.0] — 2026-08-28
 ### Added
 - **Perintah `update` / `refresh` di bot**: ambil data terbaru + retrain dari

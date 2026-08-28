@@ -48,9 +48,21 @@ untuk memakai nomor baru.
 | `update` / `refresh` | Ambil data terbaru + retrain (jika data basi) |
 | `help` | Menu bantuan |
 
-**Keamanan**: bot hanya merespon nomor di `ALLOWED_NUMBERS` (`.env`) dan hanya
-membalas pesan yang berupa perintah — chat biasa diabaikan, tidak pernah
-broadcast ke nomor random.
+**Keamanan**: bot hanya merespon nomor di daftar diizinkan (`ALLOWED_NUMBERS`
+di `.env` atau `data/allowed_numbers.json`) dan hanya membalas pesan yang
+berupa perintah — chat biasa diabaikan, tidak pernah broadcast ke nomor random.
+
+**Kelola user dari HP (admin whitelist)**: nomor admin (`BOT_ADMINS` di `.env`,
+default 6285720300059 & 6285780535433) bisa menambah/menghapus nomor yang
+boleh chat ke bot **langsung dari WhatsApp**, tanpa edit file/restart:
+
+| Perintah admin | Fungsi |
+|---|---|
+| `tambah user 6281234567890` | Izinkan nomor baru (langsung aktif) |
+| `hapus user 6281234567890` | Cabut izin (nomor admin tak bisa dihapus) |
+| `daftar user` | Lihat semua nomor yang diizinkan |
+
+Nomor non-admin yang mencoba perintah ini ditolak (⛔).
 
 **Filter likuiditas**: saham dengan nilai transaksi < Rp1 miliar/hari atau harga
 < Rp200 otomatis **dikeluarkan** dari daftar (penny stock illikuid tidak bisa

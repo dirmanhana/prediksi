@@ -47,3 +47,4 @@ data/prediction_archive.csv
 data/wa_watchlist.json
 data/watchlists.json
 data/.predict_daily.lock
+data/allowed_numbers.json
