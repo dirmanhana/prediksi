@@ -15,6 +15,9 @@ default 6285720300059 & 6285780535433) bisa menambah/menghapus nomor yang
 
 ### Security
 - Perintah admin hanya berlaku utk nomor di `BOT_ADMINS`; selain itu ditolak.
+- Tambah/hapus user **tidak perlu restart** — daftar dibaca dinamis dari
+  `data/allowed_numbers.json` (polling & webhook). Restart hanya utk
+  perubahan `.env`.
 
 ## [v0.8.0] — 2026-08-28
 ### Added

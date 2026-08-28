@@ -64,6 +64,11 @@ boleh chat ke bot **langsung dari WhatsApp**, tanpa edit file/restart:
 
 Nomor non-admin yang mencoba perintah ini ditolak (⛔).
 
+> 💡 **Tidak perlu restart** saat menambah/menghapus user — daftar diizinkan
+dibaca dari `data/allowed_numbers.json` setiap kali ada pesan masuk / tiap
+siklus polling. Restart hanya diperlukan jika mengubah `.env` (mis.
+`BOT_ADMINS`, `WATCH_REPORT_TIME`, `WEBHOOK_URL`).
+
 **Filter likuiditas**: saham dengan nilai transaksi < Rp1 miliar/hari atau harga
 < Rp200 otomatis **dikeluarkan** dari daftar (penny stock illikuid tidak bisa
 dieksekusi). Ambang bisa diubah via `MIN_VALUE_TRADED` & `MIN_PRICE` di `.env`.
