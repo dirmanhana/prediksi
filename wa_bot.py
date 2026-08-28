@@ -40,7 +40,7 @@ LOG_FILE = os.path.join(BASE, "data", "wa_bot.log")
 ENV_FILE = os.path.join(BASE, ".env")
 
 DEFAULT_ALLOWED = "6285720300059"
-DEFAULT_INTERVAL = 10
+DEFAULT_INTERVAL = 3
 
 
 # ---------------------------------------------------------------- util
@@ -135,6 +135,17 @@ class ChatetinClient:
         if data.get("code") != "SUCCESS":
             raise RuntimeError(f"kirim pesan gagal: {data.get('message')}")
         return data
+
+    def send_typing(self, phone, action="start"):
+        """Indikator mengetik (start/stop) — biar balasan terasa cepat.
+        Opsional: kalau gagal, abaikan (tidak menggagalkan balasan)."""
+        if not phone.endswith("@s.whatsapp.net"):
+            phone = f"{phone}@s.whatsapp.net"
+        try:
+            self._request("POST", "/send/chat-presence",
+                          json={"phone": phone, "action": action})
+        except Exception:
+            pass
 
     # -- read ----------------------------------------------------------
     def list_chats(self, limit=50):
@@ -274,7 +285,7 @@ def handle_command(client, msg, env):
                "top20", "rekomendasi", "rekomendasi harian", "saham", "list"):
         m_naik, m_turun = format_top20(payload)
         client.send_message(jid, m_naik)
-        time.sleep(1.5)
+        time.sleep(1.0)
         client.send_message(jid, m_turun + stale)
         log(f"-> {jid}: top20 dikirim")
 
@@ -356,15 +367,16 @@ def main():
     log(f"Pemantauan dimulai | interval {interval:.0f}s | "
         f"nomor diizinkan: {sorted(allowed)} | pesan lama sebelum {cutoff.isoformat()} diabaikan")
 
+    last_state_write = 0.0
     while True:
         try:
-            chats = client.list_chats(limit=100)
-            for chat in chats:
-                cjid = chat.get("jid", "")
-                # hanya proses chat dari nomor yang diizinkan
-                if cjid.split("@")[0] not in allowed:
-                    continue
-                msgs = client.chat_messages(cjid, limit=10)
+            # polling langsung ke jid nomor yang diizinkan (tanpa list semua chat)
+            for number in allowed:
+                jid = f"{number}@s.whatsapp.net"
+                try:
+                    msgs = client.chat_messages(jid, limit=10)
+                except requests.HTTPError:
+                    continue  # chat belum ada -> belum ada pesan
                 for m in msgs:
                     mid = m.get("id")
                     if mid in seen or m.get("is_from_me"):
@@ -385,15 +397,22 @@ def main():
                     content = (m.get("content") or "").strip()
                     log(f"Pesan baru dari {sender}: {content[:60]!r}")
                     if is_command(content):
-                        handle_command(client, m, env)
+                        client.send_typing(jid, "start")   # indikator mengetik
+                        try:
+                            handle_command(client, m, env)
+                        finally:
+                            client.send_typing(jid, "stop")
                     else:
                         log(f"-> {sender}: bukan perintah, diabaikan (tanpa balasan)")
-            # simpan state berkala
-            with open(STATE_FILE, "w") as f:
-                json.dump({
-                    "processed": sorted(seen)[-2000:],
-                    "last_processed_ts": datetime.now(timezone.utc).isoformat(),
-                }, f)
+            # simpan state bila ada perubahan / tiap 60 detik
+            now_ts = time.time()
+            if seen or now_ts - last_state_write >= 60:
+                with open(STATE_FILE, "w") as f:
+                    json.dump({
+                        "processed": sorted(seen)[-2000:],
+                        "last_processed_ts": datetime.now(timezone.utc).isoformat(),
+                    }, f)
+                last_state_write = now_ts
         except requests.RequestException as e:
             log(f"⚠️ Error koneksi: {e}")
         except Exception as e:
