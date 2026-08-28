@@ -36,13 +36,22 @@ Bot merespon perintah di WhatsApp via nomor device chatetin (6285780535433):
 
 | Perintah | Balasan |
 |---|---|
-| `prediksi` / `top 20` | Top 20 potensi NAIK ▲ & Top 20 potensi TURUN ▼ besok |
-| `cek BBRI` | Detail prediksi 1 saham (probabilitas, sektor, sinyal) |
+| `prediksi` / `top 20` | Top 20 potensi NAIK ▲ & Top 20 potensi TURUN ▼ besok (saham **likuid** saja) |
+| `top 5` / `top 10` | Top N sesuai angka |
+| `cek BBRI` | Detail 1 saham (probabilitas, sektor, **likuiditas**) |
 | `help` | Menu bantuan |
 
 **Keamanan**: bot hanya merespon nomor di `ALLOWED_NUMBERS` (`.env`) dan hanya
 membalas pesan yang berupa perintah — chat biasa diabaikan, tidak pernah
 broadcast ke nomor random.
+
+**Filter likuiditas**: saham dengan nilai transaksi < Rp1 miliar/hari atau harga
+< Rp200 otomatis **dikeluarkan** dari daftar (penny stock illikuid tidak bisa
+dieksekusi). Ambang bisa diubah via `MIN_VALUE_TRADED` & `MIN_PRICE` di `.env`.
+
+**Verifikasi harian**: tiap start, bot membandingkan prediksi lama vs harga
+aktual (dari history) dan menampilkan **rekam jejak** di balasan — berapa %%
+rekomendasi NAIK yang benar-benar naik. Data di `data/bot_track_record.csv`.
 
 ```bash
 # Setup (sekali)
@@ -93,6 +102,18 @@ log di `data/wa_bot.log`.
 **Kesimpulan**: pendekatan gabungan (semua saham, cross-sectional) menang
 karena berbagi kekuatan statistik antar saham. Prediksi arah harian secara
 intrinsik sulit — AUC ~0.58 sudah di atas random dan stabil antar bulan.
+
+### ⚠️ Hasil backtest jujur strategi Top-20 (walk-forward OOS, 224 hari)
+
+| Skenario | Hit rate | Return NETO/hari | t-stat |
+|---|---|---|---|
+| Top-20 semua saham (+biaya 0.3%) | 58.2% (base 38.6%) | +1.49% | 9.5 |
+| **Top-20 hanya LIKUID** (+biaya 0.3%) | **49.6%** (base 41.4%) | **+0.24%** | **1.9** |
+
+**Kesimpulan penting**: return +1.8%/hari itu *mirage* penny stock — 57% picks
+harga < Rp500. Setelah filter likuiditas (nilai ≥ Rp1 M/hari, harga ≥ Rp200),
+edge hampir hilang dan **belum signifikan statistik** (t=1.9). Bot sudah
+menerapkan filter ini; jangan berharap profit besar dari daftar ini.
 
 ### Fitur paling penting
 `vol_5` (volatilitas 5 hari) → `ret_1`, `log_ret_1`, `hl_range`, `ret_2`,
