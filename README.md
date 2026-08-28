@@ -4,7 +4,8 @@ Pipeline lengkap: ambil data **semua saham Bursa Efek Indonesia (IDX)** →
 feature engineering → training XGBoost → **prediksi arah pergerakan besok**
 (naik/turun) untuk semua saham.
 
-> 📖 Baca `CONVERSATION.md` untuk catatan lengkap seluruh proses & eksperimen.
+> 📖 Baca `CONVERSATION.md` untuk catatan lengkap seluruh proses & eksperimen,
+> dan `CHANGELOG.md` untuk riwayat versi.
 
 ## 🚀 Cara pakai cepat
 
@@ -32,7 +33,10 @@ python predict_daily.py --refresh
 
 ## 🤖 Bot WhatsApp (wa.chatetin.com)
 
-Bot merespon perintah di WhatsApp via nomor device chatetin (6285780535433):
+Bot merespon perintah di WhatsApp. **Nomor bot otomatis mengikuti akun
+wa.chatetin.com** — diambil dari device yang `logged_in` tiap kali bot start
+(tidak di-hardcode). Kalau ganti nomor WhatsApp di chatetin, restart service
+untuk memakai nomor baru.
 
 | Perintah | Balasan |
 |---|---|
@@ -50,8 +54,9 @@ broadcast ke nomor random.
 dieksekusi). Ambang bisa diubah via `MIN_VALUE_TRADED` & `MIN_PRICE` di `.env`.
 
 **Verifikasi harian**: tiap start, bot membandingkan prediksi lama vs harga
-aktual (dari history) dan menampilkan **rekam jejak** di balasan — berapa %%
-rekomendasi NAIK yang benar-benar naik. Data di `data/bot_track_record.csv`.
+aktual (dari history) dan menampilkan **rekam jejak** di balasan — berapa %
+rekomendasi NAIK yang benar-benar naik. Data di `data/bot_track_record.csv`
+dan arsip prediksi di `data/prediction_archive.csv`.
 
 ```bash
 # Setup (sekali)
@@ -84,8 +89,10 @@ log di `data/wa_bot.log`.
 | `ensemble.py` | Ensemble XGBoost + LSTM |
 | `per_stock_models.py` | Model per-saham utk 20 saham likuid + backtest trading |
 | `predict_daily.py` | **Pipeline produksi**: retrain + prediksi besok semua saham |
-| `wa_bot.py` | **Bot WhatsApp**: balas `prediksi`/`top 20`/`cek KODE` (via wa.chatetin.com) |
+| `wa_bot.py` | **Bot WhatsApp**: balas `prediksi`/`top N`/`cek KODE` (filter likuid + rekam jejak) |
+| `backtest_top20.py` | Backtest jujur strategi top-20 (likuiditas + biaya) |
 | `CONVERSATION.md` | Catatan percakapan & seluruh eksperimen |
+| `CHANGELOG.md` | Riwayat versi |
 
 ## 📊 Hasil eksperimen (data TEST out-of-sample)
 
@@ -130,8 +137,10 @@ menerapkan filter ini; jangan berharap profit besar dari daftar ini.
 | `data/stocks_id.csv` / `.xlsx` / `.json` | Daftar 887 saham + profil |
 | `data/macro_id.csv` | IHSG & USD/IDR harian 5 tahun |
 | `data/model_daily.ubj` + `.json` | Model produksi + metadata |
-| `data/predictions_tomorrow.csv` / `.json` | **Prediksi besok** (ranking) |
+| `data/predictions_tomorrow.csv` / `.json` | **Prediksi besok** (ranking + likuiditas) |
 | `data/prediction_log.csv` | Riwayat run harian (AUC, jumlah naik/turun) |
+| `data/prediction_archive.csv` | Arsip top-20 naik/turun harian (untuk verifikasi) |
+| `data/bot_track_record.csv` | Rekam jejak: hasil aktual vs prediksi bot |
 
 ## 🐍 Kebutuhan
 
