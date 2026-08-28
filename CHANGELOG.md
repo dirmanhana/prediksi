@@ -2,6 +2,19 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.6.0] — 2026-08-28
+### Added
+- **Fitur watchlist**: `watch TLKM,BBRI`, `tambah TLKM`, `hapus TLKM`, `lapor`.
+- **Laporan otomatis harian**: bot push status watchlist tiap hari (default
+  18:00 WIB, atur via `WATCH_REPORT_TIME` di `.env`; kosongkan utk nonaktif).
+- Laporan per saham: harga terakhir, prediksi besok, sinyal, likuiditas, dan
+  rekam jejak per saham (`ticker_track`).
+- `data/wa_watchlist.json` untuk penyimpanan watchlist.
+
+### Catatan
+- Data bersifat **harian** (update 1×/hari via cron `predict_daily.py --refresh`),
+  bukan harga real-time.
+
 ## [v0.5.0] — 2026-08-28
 ### Added
 - **Filter likuiditas di bot**: saham nilai transaksi < Rp1 M/hari atau harga

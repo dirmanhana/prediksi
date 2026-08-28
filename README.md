@@ -43,6 +43,8 @@ untuk memakai nomor baru.
 | `prediksi` / `top 20` | Top 20 potensi NAIK ▲ & Top 20 potensi TURUN ▼ besok (saham **likuid** saja) |
 | `top 5` / `top 10` | Top N sesuai angka |
 | `cek BBRI` | Detail 1 saham (probabilitas, sektor, **likuiditas**) |
+| `watch TLKM,BBRI` / `tambah` / `hapus` | Atur **watchlist** saham yang dipantau |
+| `lapor` | Laporan status semua saham watchlist (harga, prediksi, rekam jejak) |
 | `help` | Menu bantuan |
 
 **Keamanan**: bot hanya merespon nomor di `ALLOWED_NUMBERS` (`.env`) dan hanya
@@ -57,6 +59,12 @@ dieksekusi). Ambang bisa diubah via `MIN_VALUE_TRADED` & `MIN_PRICE` di `.env`.
 aktual (dari history) dan menampilkan **rekam jejak** di balasan — berapa %
 rekomendasi NAIK yang benar-benar naik. Data di `data/bot_track_record.csv`
 dan arsip prediksi di `data/prediction_archive.csv`.
+
+**Watchlist & laporan otomatis**: set daftar saham favorit dengan `watch`,
+ketik `lapor` kapan saja, atau biarkan bot **push laporan otomatis tiap hari**
+(default 18:00 WIB, ubah via `WATCH_REPORT_TIME` di `.env`; kosongkan utk
+nonaktif). Laporan berisi harga terakhir, prediksi besok, likuiditas, dan
+rekam jejak per saham. Catatan: data **harian**, bukan harga real-time.
 
 ```bash
 # Setup (sekali)
@@ -141,6 +149,7 @@ menerapkan filter ini; jangan berharap profit besar dari daftar ini.
 | `data/prediction_log.csv` | Riwayat run harian (AUC, jumlah naik/turun) |
 | `data/prediction_archive.csv` | Arsip top-20 naik/turun harian (untuk verifikasi) |
 | `data/bot_track_record.csv` | Rekam jejak: hasil aktual vs prediksi bot |
+| `data/wa_watchlist.json` | Watchlist saham yang dipantau user |
 
 ## 🐍 Kebutuhan
 

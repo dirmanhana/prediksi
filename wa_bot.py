@@ -268,6 +268,102 @@ def format_single(payload, ticker):
 # ---------------------------------------------------------------- verifikasi harian
 ARCHIVE = os.path.join(BASE, "data", "prediction_archive.csv")
 
+# ---------------------------------------------------------------- watchlist
+WATCH_FILE = os.path.join(BASE, "data", "wa_watchlist.json")
+WATCH_REPORT_TIME = "18:00"   # default push otomatis (bisa diubah via .env)
+
+
+def load_watchlist():
+    try:
+        with open(WATCH_FILE) as f:
+            return json.load(f).get("tickers", [])
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def save_watchlist(tickers):
+    with open(WATCH_FILE, "w") as f:
+        json.dump({"tickers": sorted(set(tickers))}, f)
+
+
+def _parse_tickers(text):
+    """Ubah 'TLKM,BBRI, ASII' -> ['TLKM','BBRI','ASII'] (valid saja)."""
+    out = []
+    for t in re.split(r"[,;\s]+", text):
+        t = t.strip().upper().replace(".JK", "")
+        if t and re.fullmatch(r"[A-Z0-9.]{2,6}", t) and t not in out:
+            out.append(t)
+    return out
+
+
+def ticker_track(ticker):
+    """Rekam jejak per saham utk prediksi NAIK: (benar, total)."""
+    if not os.path.exists(TRACK_FILE):
+        return 0, 0
+    try:
+        import pandas as pd
+        df = pd.read_csv(TRACK_FILE)
+        sub = df[(df["ticker"] == ticker.upper()) & (df["arah"] == 1)]
+        if sub.empty:
+            return 0, 0
+        return int((sub["aktual_naik"] == 1).sum()), len(sub)
+    except Exception:
+        return 0, 0
+
+
+def format_watch_report(payload):
+    """Laporan status semua saham di watchlist -> (teks, error)."""
+    watch = load_watchlist()
+    if not watch:
+        return None, ("📭 Watchlist masih kosong. Ketik: `watch TLKM,BBRI,ASII` "
+                      "untuk menetapkan.")
+    saham = {x["ticker"].upper(): x for x in payload["saham"]}
+    lines = [
+        "📊 *LAPORAN WATCHLIST*",
+        f"📅 Data s/d {payload.get('data_sampai', '?')} | "
+        f"Prediksi {payload.get('tanggal_prediksi', '?')}",
+        "———————————————",
+    ]
+    for tk in watch:
+        x = saham.get(tk)
+        if not x:
+            lines.append(f"⚪ *{tk}* — tidak ada di data prediksi")
+            continue
+        p = x["prob_up"] * 100
+        emoji = "🟢" if str(x["signal"]).startswith("NAIK") else "🔴"
+        liq = "LIKUID" if is_liquid(x) else "ILLIKUID ⚠️"
+        hit, total = ticker_track(tk)
+        track = f"{hit}/{total} benar" if total >= 3 else "data kurang"
+        lines.append(
+            f"{emoji} *{x['ticker']}* — Rp {x['close']:,.0f}\n"
+            f"   Besok: {x['signal']} {p:.1f}% | {liq}\n"
+            f"   Rekam: {track}"
+        )
+    lines += ["———————————————", "⚠️ Bukan saran investasi."]
+    return "\n".join(lines), None
+
+
+def report_worker(client, allowed, report_time):
+    """Thread: kirim laporan watchlist otomatis tiap hari jam tertentu."""
+    last_sent = ""
+    while True:
+        try:
+            now = datetime.now().strftime("%H:%M")
+            today = datetime.now().strftime("%Y-%m-%d")
+            if now >= report_time and last_sent != today:
+                payload, err = load_predictions()
+                if not err and load_watchlist():
+                    text, _ = format_watch_report(payload)
+                    if text:
+                        for num in allowed:
+                            client.send_message(f"{num}@s.whatsapp.net", text)
+                        log(f"Laporan watchlist otomatis terkirim ({report_time}) "
+                            f"ke {sorted(allowed)}")
+                last_sent = today
+        except Exception as e:
+            log(f"⚠️ Laporan otomatis gagal: {e}")
+        time.sleep(45)
+
 
 def _read_history_for(tickers):
     """Baca close utk ticker tertentu — prioritas parquet (cepat), fallback CSV."""
@@ -428,6 +524,20 @@ def parse_command(content):
     m = re.match(r"^(?:cek|/cek|cari|prediksi|rekomendasi)\s+([a-z0-9.]+)$", low)
     if m:
         return ("cek", m.group(1))
+    # watchlist: watch TLKM,BBRI / tambah / hapus / lapor
+    m = re.match(r"^(?:watch|pantau|set watch|set pantau)\s+(.+)$", low)
+    if m:
+        return ("watch", m.group(1))
+    if low in ("watch", "pantau", "watchlist"):
+        return ("watch_show", None)
+    m = re.match(r"^(?:tambah|add|tambah watch)\s+(.+)$", low)
+    if m:
+        return ("watch_add", m.group(1))
+    m = re.match(r"^(?:hapus|remove|unwatch|delete)\s+(.+)$", low)
+    if m:
+        return ("watch_del", m.group(1))
+    if low in ("lapor", "report", "laporan"):
+        return ("lapor", None)
     if low in ("help", "bantuan", "menu"):
         return ("help", None)
     return None
@@ -439,10 +549,61 @@ HELP_TEXT = (
     "• `prediksi` / `top 20` — Top 20 potensi NAIK & TURUN besok (saham LIKUID saja)\n"
     "• `top 5` / `top 10` — Top N sesuai angka\n"
     "• `cek BBRI` — detail 1 saham (likuiditas + probabilitas)\n"
+    "• `watch TLKM,BBRI` — set watchlist saham yang dipantau\n"
+    "• `tambah TLKM` / `hapus TLKM` — ubah watchlist\n"
+    "• `lapor` — laporan status semua saham watchlist\n"
     "• `help` — menu ini\n\n"
+    "🔔 Laporan watchlist otomatis dikirim tiap hari (lihat WATCH_REPORT_TIME di .env).\n"
     "🔒 Saham illikuid/penny dikeluarkan otomatis dari daftar.\n"
     "⚠️ Hasil bukan saran investasi."
 )
+
+
+def handle_watch(client, cmd, jid):
+    """Kelola watchlist: watch / watch_show / watch_add / watch_del."""
+    kind, arg = cmd
+    if kind == "watch":
+        tks = _parse_tickers(arg)
+        if not tks:
+            client.send_message(jid, "Format: `watch TLKM,BBRI,ASII` "
+                                      "(kode saham dipisah koma)")
+        else:
+            save_watchlist(tks)
+            client.send_message(jid,
+                f"📌 Watchlist disetel: {', '.join(tks)}\n"
+                f"Ketik `lapor` utk laporan status, atau `tambah`/`hapus` utk ubah.")
+            log(f"-> {jid}: watch set {tks}")
+    elif kind == "watch_show":
+        w = load_watchlist()
+        if w:
+            client.send_message(jid,
+                f"📌 Watchlist saat ini: {', '.join(w)}\n"
+                f"(`watch A,B,C` utk ganti total, `lapor` utk laporan)")
+        else:
+            client.send_message(jid,
+                "📭 Watchlist kosong. Ketik `watch TLKM,BBRI` untuk menetapkan.")
+        log(f"-> {jid}: watch_show")
+    elif kind == "watch_add":
+        tks = _parse_tickers(arg)
+        if not tks:
+            client.send_message(jid, "Format: `tambah TLKM,BBRI`")
+            return
+        new = sorted(set(load_watchlist() + tks))
+        save_watchlist(new)
+        client.send_message(jid,
+            f"➕ Ditambahkan: {', '.join(tks)}\n"
+            f"📌 Watchlist: {', '.join(new)}")
+        log(f"-> {jid}: watch add {tks}")
+    elif kind == "watch_del":
+        tks = _parse_tickers(arg)
+        cur = load_watchlist()
+        removed = [t for t in tks if t in cur]
+        new = [t for t in cur if t not in tks]
+        save_watchlist(new)
+        client.send_message(jid,
+            f"➖ Dihapus: {', '.join(removed) if removed else 'tidak ada'}\n"
+            f"📌 Watchlist: {', '.join(new) if new else '(kosong)'}")
+        log(f"-> {jid}: watch del {removed}")
 
 
 def handle_command(client, msg, env):
@@ -457,6 +618,11 @@ def handle_command(client, msg, env):
     if not cmd:
         return
 
+    # perintah watchlist tidak butuh file prediksi
+    if cmd[0] in ("watch", "watch_show", "watch_add", "watch_del"):
+        handle_watch(client, cmd, jid)
+        return
+
     payload, err = load_predictions()
     if err:
         client.send_message(jid, f"⚠️ {err}")
@@ -464,7 +630,15 @@ def handle_command(client, msg, env):
         return
     stale = check_freshness(payload)
 
-    if cmd[0] == "top":
+    if cmd[0] == "lapor":
+        text, err = format_watch_report(payload)
+        if err:
+            client.send_message(jid, err)
+        else:
+            client.send_message(jid, text + stale)
+        log(f"-> {jid}: lapor ({_t.time()-t0:.1f}s)")
+
+    elif cmd[0] == "top":
         n = cmd[1]
         text = format_top(payload, n) + stale
         track = summarize_track()
@@ -540,6 +714,14 @@ def main():
             pass
     log(f"Pemantauan dimulai | interval {interval:.0f}s | "
         f"nomor diizinkan: {sorted(allowed)} | pesan lama sebelum {cutoff.isoformat()} diabaikan")
+
+    # thread laporan watchlist otomatis harian
+    report_time = env.get("WATCH_REPORT_TIME", WATCH_REPORT_TIME)
+    import threading
+    threading.Thread(target=report_worker,
+                     args=(client, sorted(allowed), report_time),
+                     daemon=True).start()
+    log(f"Laporan watchlist otomatis: setiap hari {report_time} WIB")
 
     last_state_write = 0.0
     while True:
