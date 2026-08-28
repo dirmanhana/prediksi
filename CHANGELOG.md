@@ -2,6 +2,20 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.8.0] — 2026-08-28
+### Added
+- **Perintah `update` / `refresh` di bot**: ambil data terbaru + retrain dari
+  WhatsApp. Kalau data masih terkini (gap ≤ 3 hari) → balas *"Data sudah
+  terkini"*; kalau basi → jalankan `predict_daily.py --refresh` di thread
+  background (bot tetap responsif) lalu balas *"Pembaharuan data selesai"*
+  dengan tanggal data & AUC terbaru.
+- Alias: `update data`, `refresh data`, `tarik data`, `ambil data`,
+  `perbarui data`.
+
+### Note
+- Update bisa memakan ±10-20 menit (incremental 887 saham + retrain).
+- Aman bentrok dgn cron 17:30 (lock flock di predict_daily.py).
+
 ## [v0.7.0] — 2026-08-28
 ### Added
 - **Mode webhook**: `WEBHOOK_URL` / `WEBHOOK_PORT` / `WEBHOOK_SECRET` di `.env`.

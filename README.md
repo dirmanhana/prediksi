@@ -45,6 +45,7 @@ untuk memakai nomor baru.
 | `cek BBRI` | Detail 1 saham (probabilitas, sektor, **likuiditas**) |
 | `watch TLKM,BBRI` / `tambah` / `hapus` | Atur **watchlist** saham yang dipantau |
 | `lapor` | Laporan status semua saham watchlist (harga, prediksi, rekam jejak) |
+| `update` / `refresh` | Ambil data terbaru + retrain (jika data basi) |
 | `help` | Menu bantuan |
 
 **Keamanan**: bot hanya merespon nomor di `ALLOWED_NUMBERS` (`.env`) dan hanya
@@ -66,6 +67,12 @@ ketik `lapor` kapan saja, atau biarkan bot **push laporan otomatis tiap hari**
 nonaktif). Laporan berisi harga terakhir, prediksi besok, likuiditas, dan
 rekam jejak per saham. Catatan: data **harian**, bukan harga real-time.
 Watchlist **per-user** (tiap nomor punya daftar sendiri).
+
+**Update data via WhatsApp**: perintah `update` / `refresh` — kalau data
+prediksi masih terkini (gap ≤ 3 hari), bot membalas *"✅ Data sudah terkini"*;
+kalau basi, bot menjalankan `predict_daily.py --refresh` di background
+(±10-20 menit) lalu membalas *"✅ Pembaharuan data selesai"* + tanggal data
+dan AUC model terbaru.
 
 ```bash
 # Setup (sekali)

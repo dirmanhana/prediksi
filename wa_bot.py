@@ -27,7 +27,10 @@ Keamanan:
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -573,6 +576,12 @@ def parse_command(content):
         return ("watch_del", m.group(1))
     if low in ("lapor", "report", "laporan"):
         return ("lapor", None)
+    # update data: update / refresh / tarik data / ambil data
+    if low in ("update", "update data", "refresh", "refresh data",
+               "update data saham", "tarik data", "ambil data",
+               "perbarui", "perbarui data", "update prediksi",
+               "refresh prediksi"):
+        return ("refresh", None)
     if low in ("help", "bantuan", "menu"):
         return ("help", None)
     return None
@@ -587,6 +596,7 @@ HELP_TEXT = (
     "• `watch TLKM,BBRI` — set watchlist saham yang dipantau\n"
     "• `tambah TLKM` / `hapus TLKM` — ubah watchlist\n"
     "• `lapor` — laporan status semua saham watchlist\n"
+    "• `update` / `refresh` — ambil data terbaru + retrain (jika data basi)\n"
     "• `help` — menu ini\n\n"
     "🔔 Laporan watchlist otomatis dikirim tiap hari (lihat WATCH_REPORT_TIME di .env).\n"
     "🔒 Saham illikuid/penny dikeluarkan otomatis dari daftar.\n"
@@ -693,6 +703,76 @@ def handle_command(client, msg, env):
     elif cmd[0] == "help":
         client.send_message(jid, HELP_TEXT)
         log(f"-> {jid}: help dikirim ({_t.time()-t0:.1f}s)")
+
+    elif cmd[0] == "refresh":
+        handle_refresh(client, jid, payload)
+        log(f"-> {jid}: update data diminta ({_t.time()-t0:.1f}s)")
+
+
+# ---------------------------------------------------------------- update data
+def data_is_current(payload, max_gap_days=3):
+    """True kalau data prediksi masih terkini (gap ≤ max_gap_days hari).
+    Aturan: Senin→Jumat(-3), Selasa→Senin(-1), dst — aman utk akhir pekan."""
+    dstr = (payload or {}).get("data_sampai")
+    if not dstr:
+        return False, None
+    try:
+        d = datetime.strptime(dstr, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return False, None
+    gap = (datetime.now().date() - d).days
+    return gap <= max_gap_days, d
+
+
+def handle_refresh(client, jid, payload):
+    """Perintah update data: kalau sudah terkini -> bilang terkini;
+    kalau basi -> jalankan predict_daily.py --refresh di thread, lalu
+    balas 'pembaharuan data selesai'."""
+    current, d = data_is_current(payload)
+    if current:
+        client.send_message(jid,
+            f"✅ Data sudah terkini (s/d {d}).\n"
+            f"Tidak perlu update. Ketik `prediksi` utk daftar terbaru.")
+        return
+
+    # data basi -> jalankan update di thread (biar bot tetap responsif)
+    def work():
+        try:
+            log(f"Update data dimulai utk {jid} (data s/d {d})")
+            client.send_message(jid,
+                "⏳ Memulai pembaharuan data + retrain model...\n"
+                "Bisa memakan ±10-20 menit. Saya kabari kalau selesai.")
+            proc = subprocess.run(
+                [sys.executable, os.path.join(BASE, "predict_daily.py"), "--refresh"],
+                cwd=BASE, capture_output=True, text=True, timeout=2400)
+            if proc.returncode != 0:
+                err = (proc.stderr or proc.stdout or "").strip().splitlines()
+                msg = err[-1] if err else "gagal tidak diketahui"
+                client.send_message(jid, f"⚠️ Pembaharuan data gagal: {msg}")
+                log(f"Update data GAGAL utk {jid}: {msg}")
+                return
+            p2, perr = load_predictions()
+            if perr:
+                client.send_message(jid,
+                    f"✅ Pembaharuan data selesai! (tapi gagal baca hasil: {perr})")
+            else:
+                nd = p2.get("data_sampai", "?")
+                auc = p2.get("valid_auc", 0)
+                n = p2.get("jumlah_saham", 0)
+                client.send_message(jid,
+                    f"✅ Pembaharuan data selesai!\n"
+                    f"📅 Data terbaru s/d {nd}\n"
+                    f"🤖 Model {n} saham | AUC {auc:.3f}\n"
+                    f"Ketik `prediksi` utk daftar terbaru.")
+                log(f"Update data SELESAI utk {jid} (s/d {nd})")
+        except subprocess.TimeoutExpired:
+            client.send_message(jid,
+                "⚠️ Pembaharuan data timeout (>40 menit). Coba lagi nanti.")
+        except Exception as e:
+            client.send_message(jid, f"⚠️ Error saat update: {e}")
+            log(f"Update data error: {e}")
+
+    threading.Thread(target=work, daemon=True).start()
 
 
 # ---------------------------------------------------------------- pesan masuk
