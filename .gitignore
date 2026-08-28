@@ -36,3 +36,5 @@ data/predictions_tomorrow.csv
 # OS
 .DS_Store
 Thumbs.db
+data/wa_bot_state.json
+data/wa_bot_stdout.log
