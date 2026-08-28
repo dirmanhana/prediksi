@@ -160,6 +160,9 @@ class ChatetinClient:
 
 
 # ---------------------------------------------------------------- formatter
+import re
+
+
 def load_predictions():
     """Baca data prediksi terbaru. Return (payload, error)."""
     if not os.path.exists(PRED_FILE):
@@ -181,36 +184,31 @@ def format_short(item, arrow=True):
     return f"{item['rank']:>3d}. {item['ticker']:<6s} {prob:5.1f}%  {name}"
 
 
-def format_top20(payload):
-    """Top 20 NAIK + Top 20 TURUN -> dua pesan (naik, turun)."""
+def format_top(payload, n=20):
+    """Top N NAIK + Top N TURUN dalam SATU pesan (cepat: 1x kirim)."""
     saham = payload["saham"]
+    n = max(1, min(int(n), len(saham)))
     tanggal = payload.get("tanggal_prediksi", "?")
     auc = payload.get("valid_auc", 0)
-    n = payload.get("jumlah_saham", len(saham))
+    jumlah = payload.get("jumlah_saham", len(saham))
 
-    top = saham[:20]
-    bottom = list(reversed(saham[-20:]))
+    top = saham[:n]
+    bottom = list(reversed(saham[-n:]))
 
-    head = (
-        "📊 *PREDIKSI SAHAM IDX — BESOK*\n"
-        f"📅 Prediksi untuk: {tanggal}\n"
-        f"🤖 XGBoost gabungan | {n} saham | AUC {auc:.3f}\n"
-        "———————————————"
-    )
-
-    naik = ["🟢 *TOP 20 POTENSI NAIK ▲*"] + \
-           [format_short(x) for x in top] + \
-           ["———————————————", "⬆️ urutan = probabilitas naik tertinggi"]
-
-    turun = ["🔴 *TOP 20 POTENSI TURUN ▼*"] + \
-            [format_short(x) for x in bottom] + \
-            ["———————————————", "⬇️ urutan = probabilitas naik terendah"]
-
-    footer = (
-        "⚠️ *Disclaimer:* ini bukan saran investasi. "
-        "AUC ~0.58 = sinyal lemah, gunakan bijak."
-    )
-    return "\n".join([head] + naik), "\n".join([head] + turun + [footer])
+    lines = [
+        "📊 *PREDIKSI SAHAM IDX — BESOK*",
+        f"📅 Prediksi untuk: {tanggal}",
+        f"🤖 XGBoost gabungan | {jumlah} saham | AUC {auc:.3f}",
+        "————————————————",
+        f"🟢 *TOP {n} POTENSI NAIK ▲*",
+    ] + [format_short(x) for x in top] + [
+        "————————————————",
+        f"🔴 *TOP {n} POTENSI TURUN ▼*",
+    ] + [format_short(x) for x in bottom] + [
+        "————————————————",
+        "⚠️ Bukan saran investasi. AUC ~0.58 = sinyal lemah, gunakan bijak.",
+    ]
+    return "\n".join(lines)
 
 
 def format_single(payload, ticker):
@@ -251,75 +249,80 @@ def check_freshness(payload):
 
 
 # ---------------------------------------------------------------- handler
-COMMAND_WORDS = ("prediksi", "top 20", "top20", "rekomendasi", "saham",
-                "list", "cek ", "/cek ", "cek:", "cari ",
-                "help", "bantuan", "menu")
-
-
-def is_command(content):
-    """True hanya utk pesan yang memang terlihat seperti perintah bot.
-    Pesan chat biasa (bukan perintah) TIDAK akan dibalas — biar tidak spam."""
-    low = content.strip().lower()
+def parse_command(content):
+    """Parse perintah -> (cmd, arg). cmd: top|cek|help, atau None kalau bukan perintah.
+    Didukung: prediksi / top 20 / top N / prediksi top N / cek KODE / prediksi KODE / help."""
+    low = (content or "").strip().lower()
     if not low:
-        return False
-    return any(low == w or low.startswith(w) for w in COMMAND_WORDS)
+        return None
+    # daftar penuh
+    if low in ("prediksi", "prediksi harian", "prediksi hari ini",
+               "rekomendasi", "rekomendasi harian", "saham", "list",
+               "top", "top 20", "top20"):
+        return ("top", 20)
+    # top N / prediksi top N
+    m = re.match(r"^(?:prediksi|rekomendasi)\s+top\s*(\d+)$", low)
+    if m:
+        return ("top", int(m.group(1)))
+    m = re.match(r"^top\s*(\d+)$", low)
+    if m:
+        return ("top", int(m.group(1)))
+    # cek KODE / prediksi KODE / rekomendasi KODE
+    m = re.match(r"^(?:cek|/cek|cari|prediksi|rekomendasi)\s+([a-z0-9.]+)$", low)
+    if m:
+        return ("cek", m.group(1))
+    if low in ("help", "bantuan", "menu"):
+        return ("help", None)
+    return None
+
+
+HELP_TEXT = (
+    "🤖 *Bot Prediksi Saham IDX*\n"
+    "Perintah yang tersedia:\n"
+    "• `prediksi` / `top 20` — Top 20 potensi NAIK & TURUN besok\n"
+    "• `top 5` / `top 10` — Top N sesuai angka\n"
+    "• `cek BBRI` — detail 1 saham (contoh: `cek BBRI`)\n"
+    "• `help` — menu ini\n\n"
+    "⚠️ Hasil bukan saran investasi."
+)
 
 
 def handle_command(client, msg, env):
     """Proses satu pesan masuk -> kirim balasan ke pengirim."""
+    import time as _t
+    t0 = _t.time()
     content = (msg.get("content") or "").strip()
     jid = msg.get("chat_jid") or msg.get("sender_jid")
     if not content or not jid:
         return
-    low = content.lower()
+    cmd = parse_command(content)
+    if not cmd:
+        return
 
     payload, err = load_predictions()
     if err:
         client.send_message(jid, f"⚠️ {err}")
         log(f"-> {jid}: prediksi file error")
         return
-
     stale = check_freshness(payload)
 
-    if low in ("prediksi", "prediksi harian", "prediksi hari ini", "top 20",
-               "top20", "rekomendasi", "rekomendasi harian", "saham", "list"):
-        m_naik, m_turun = format_top20(payload)
-        client.send_message(jid, m_naik)
-        time.sleep(1.0)
-        client.send_message(jid, m_turun + stale)
-        log(f"-> {jid}: top20 dikirim")
+    if cmd[0] == "top":
+        n = cmd[1]
+        text = format_top(payload, n) + stale
+        client.send_message(jid, text)
+        log(f"-> {jid}: top {n} dikirim ({_t.time()-t0:.1f}s)")
 
-    elif low.startswith(("cek ", "/cek ", "cek:", "cari ")):
-        tk = low.split(" ", 1)[1].strip() if " " in low else ""
-        if not tk:
-            client.send_message(jid, "Format: `cek KODE` contoh: `cek BBRI`")
-            return
-        text, err = format_single(payload, tk)
+    elif cmd[0] == "cek":
+        text, err = format_single(payload, cmd[1])
         if err:
             client.send_message(jid, err)
         else:
             client.send_message(jid, text + stale)
-        log(f"-> {jid}: cek {tk}")
+        log(f"-> {jid}: cek {cmd[1]} ({_t.time()-t0:.1f}s)")
 
-    elif low in ("help", "bantuan", "menu", "halo", "hai", "hi", "hello",
-                 "assalamualaikum", "assalamu'alaikum", "p"):
-        client.send_message(jid, (
-            "🤖 *Bot Prediksi Saham IDX*\n"
-            "Perintah yang tersedia:\n"
-            "• `prediksi` atau `top 20` — Top 20 potensi NAIK & TURUN besok\n"
-            "• `cek KODE` — detail 1 saham (contoh: `cek BBRI`)\n"
-            "• `help` — menu ini\n\n"
-            "⚠️ Hasil bukan saran investasi."
-        ))
-        log(f"-> {jid}: help dikirim")
-
-    else:
-        client.send_message(jid, (
-            f"Halo! Perintah tidak dikenali: *{content[:50]}*\n\n"
-            "Coba:\n• `prediksi` — Top 20 NAIK/TURUN besok\n"
-            "• `cek BBRI` — detail saham\n• `help` — menu"
-        ))
-        log(f"-> {jid}: perintah tak dikenal")
+    elif cmd[0] == "help":
+        client.send_message(jid, HELP_TEXT)
+        log(f"-> {jid}: help dikirim ({_t.time()-t0:.1f}s)")
 
 
 def main():
@@ -396,7 +399,7 @@ def main():
                     seen.add(mid)
                     content = (m.get("content") or "").strip()
                     log(f"Pesan baru dari {sender}: {content[:60]!r}")
-                    if is_command(content):
+                    if parse_command(content):
                         client.send_typing(jid, "start")   # indikator mengetik
                         try:
                             handle_command(client, m, env)
