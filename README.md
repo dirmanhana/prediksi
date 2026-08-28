@@ -30,6 +30,37 @@ python predict_daily.py --refresh
 30 17 * * 1-5 cd /home/dirman/workspace/xgbooxt && python3 predict_daily.py --refresh >> data/cron.log 2>&1
 ```
 
+## 🤖 Bot WhatsApp (wa.chatetin.com)
+
+Bot merespon perintah di WhatsApp via nomor device chatetin (6285780535433):
+
+| Perintah | Balasan |
+|---|---|
+| `prediksi` / `top 20` | Top 20 potensi NAIK ▲ & Top 20 potensi TURUN ▼ besok |
+| `cek BBRI` | Detail prediksi 1 saham (probabilitas, sektor, sinyal) |
+| `help` | Menu bantuan |
+
+**Keamanan**: bot hanya merespon nomor di `ALLOWED_NUMBERS` (`.env`) dan hanya
+membalas pesan yang berupa perintah — chat biasa diabaikan, tidak pernah
+broadcast ke nomor random.
+
+```bash
+# Setup (sekali)
+cp .env.example .env   # isi kredensial chatetin + nomor yang diizinkan
+
+# Jalankan manual / test
+python wa_bot.py              # pakai prediksi yang sudah ada
+python wa_bot.py --refresh    # retrain + prediksi baru dulu
+python wa_bot.py --once       # proses pesan sekali lalu keluar (test)
+
+# Jalankan sebagai service (auto-restart)
+systemctl --user enable --now wa_bot.service
+journalctl --user -u wa_bot.service -f   # lihat log
+```
+
+File terkait: `wa_bot.py`, `.env.example`, `run_bot.sh`, `wa_bot.service`,
+log di `data/wa_bot.log`.
+
 ## 📁 Struktur proyek
 
 | Script | Fungsi |
@@ -44,6 +75,7 @@ python predict_daily.py --refresh
 | `ensemble.py` | Ensemble XGBoost + LSTM |
 | `per_stock_models.py` | Model per-saham utk 20 saham likuid + backtest trading |
 | `predict_daily.py` | **Pipeline produksi**: retrain + prediksi besok semua saham |
+| `wa_bot.py` | **Bot WhatsApp**: balas `prediksi`/`top 20`/`cek KODE` (via wa.chatetin.com) |
 | `CONVERSATION.md` | Catatan percakapan & seluruh eksperimen |
 
 ## 📊 Hasil eksperimen (data TEST out-of-sample)

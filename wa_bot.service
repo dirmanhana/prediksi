@@ -1,0 +1,15 @@
+[Unit]
+Description=WhatsApp Bot Prediksi Saham IDX (xgbooxt)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/dirman/workspace/xgbooxt
+ExecStart=/usr/bin/python3 /home/dirman/workspace/xgbooxt/wa_bot.py
+Restart=always
+RestartSec=15
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
