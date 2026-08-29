@@ -40,6 +40,9 @@ VERSION = "v0.11.0"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
+MODEL_UBJ = os.path.join(BASE, "data", "model_daily.ubj")
+MODEL_JSON = os.path.join(BASE, "data", "model_daily.json")
+LAST_FEATURES = os.path.join(BASE, "data", "last_features.parquet")
 STATE_FILE = os.path.join(BASE, "data", "wa_bot_state.json")
 LOG_FILE = os.path.join(BASE, "data", "wa_bot.log")
 ENV_FILE = os.path.join(BASE, ".env")
@@ -1131,15 +1134,24 @@ def data_is_current(payload, max_gap_days=3):
 def handle_refresh(client, jid, payload, force=False):
     """Perintah update data: kalau sudah terkini -> bilang terkini;
     kalau basi (atau force) -> jalankan predict_daily.py --refresh di thread,
-    lalu balas 'pembaharuan data selesai'."""
+    lalu balas 'pembaharuan data selesai'.
+
+    `force` (update paksa) = "pastikan SEMUA siap": cek data segar DAN file
+    pendukung model ada (prediksi, model .ubj, metadata, last_features).
+    Kalau semuanya sudah ada & segar -> balas 'sudah terkini' (tanpa kerja
+    berat). Ini menutup kasus habis git pull: data terlihat segar tapi file
+    model belum ada -> tetap di-refresh."""
     current, d = data_is_current(payload)
-    if current and not force:
+    missing = [f for f in (PRED_FILE, MODEL_UBJ, MODEL_JSON, LAST_FEATURES)
+               if not os.path.exists(f)]
+    if current and (not force or not missing):
+        extra = "" if missing else " + model siap"
         client.send_message(jid,
-            f"✅ Data sudah terkini (s/d {d}).\n"
+            f"✅ Data sudah terkini (s/d {d}){extra}.\n"
             f"Tidak perlu update. Ketik `prediksi` utk daftar terbaru.")
         return
 
-    # data basi -> jalankan update di thread (biar bot tetap responsif)
+    # data basi / file model kurang -> jalankan update di thread (biar bot tetap responsif)
     def work():
         try:
             log(f"Update data dimulai utk {jid} (data s/d {d})")

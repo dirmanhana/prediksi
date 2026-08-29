@@ -49,7 +49,7 @@ untuk memakai nomor baru.
 | `watch TLKM,BBRI` / `tambah` / `hapus` | Atur **watchlist** saham yang dipantau |
 | `lapor` | Laporan status semua saham watchlist (harga, prediksi, rekam jejak) |
 | `update` / `refresh` | Ambil data terbaru + retrain (jika data basi) |
-| `update paksa` | Paksa ambil data + retrain (setup VPS baru / data lama) |
+| `update paksa` | Pastikan semuanya siap: refresh hanya jika data basi / file model kurang |
 | `versi` | Info versi bot & model (cek apakah sudah update) |
 | `help` | Menu bantuan |
 
@@ -96,10 +96,12 @@ kalau basi, bot menjalankan `predict_daily.py --refresh` di background
 (±10-20 menit) lalu membalas *"✅ Pembaharuan data selesai"* + tanggal data
 dan AUC model terbaru.
 
-- **`update paksa`** (alias `paksa update` / `force refresh`) memaksa update
-  walau data dianggap terkini — cocok utk **setup VPS baru** atau setelah
-  `git pull` (file model/prediksi tidak ikut di-commit, jadi perlu dibangun
-  ulang). `update` biasa juga kini jalan walau file prediksi belum ada.
+- **`update paksa`** (alias `paksa update` / `force refresh`) — "pastikan
+  semuanya siap": kalau data sudah terkini DAN file model lengkap, balas
+  *"✅ Data sudah terkini + model siap"* (tanpa kerja berat); baru refresh
+  kalau data basi atau ada file kurang (mis. habis `git pull` — file model
+  tidak ikut di-commit). `update` biasa juga kini jalan walau file prediksi
+  belum ada.
 - Update otomatis ikut mengambil **foreign flow hari terakhir** (Net Asing di
   `rekap` / `cek KODE`) via `scrape_foreign_flow.py --latest`.
 - Setelah update, kirim **`versi`** utk konfirmasi versi bot (commit hash),

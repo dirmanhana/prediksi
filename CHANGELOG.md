@@ -2,6 +2,13 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.11.2] — 2026-08-29
+### Changed
+- **`update paksa` lebih pintar**: kalau data sudah terkini DAN semua file
+  pendukung model ada (prediksi, model .ubj, metadata, last_features) →
+  balas "✅ Data sudah terkini + model siap" tanpa refresh. Tetap refresh
+  kalau ada file kurang (mis. habis git pull) atau data basi.
+
 ## [v0.11.1] — 2026-08-29
 ### Fixed
 - **Crash `predict_daily.py --refresh` di VPS** (TypeError: Cannot compare
