@@ -845,6 +845,10 @@ def parse_command(content):
                "perbarui", "perbarui data", "update prediksi",
                "refresh prediksi"):
         return ("refresh", None)
+    # update PAKSA: bypass cek kefresh-an (mis. setup VPS baru / data lama)
+    if low in ("update paksa", "paksa update", "force update", "update force",
+               "refresh paksa", "paksa refresh", "force refresh", "refresh force"):
+        return ("refresh_force", None)
     # kenapa KODE / why KODE / alasan KODE — penjelasan sinyal (SHAP)
     m = re.match(r"^(?:kenapa|why|alasan|analisa|analisis)\s+([a-z0-9.]+)$", low)
     if m:
@@ -973,6 +977,18 @@ def handle_command(client, msg, env):
         handle_watch(client, cmd, jid)
         return
 
+    # update data TIDAK butuh file prediksi (bisa utk setup VPS baru) —
+    # kalau file belum ada, tetap jalankan (payload=None).
+    if cmd[0] in ("refresh", "refresh_force"):
+        payload = None
+        if cmd[0] == "refresh":
+            payload, err = load_predictions()
+            if err:
+                payload = None  # belum ada prediksi -> langsung update
+        handle_refresh(client, jid, payload, force=(cmd[0] == "refresh_force"))
+        log(f"-> {jid}: {'update paksa' if cmd[0]=='refresh_force' else 'update'} diminta ({_t.time()-t0:.1f}s)")
+        return
+
     payload, err = load_predictions()
     if err:
         client.send_message(jid, f"⚠️ {err}")
@@ -1036,10 +1052,6 @@ def handle_command(client, msg, env):
     elif cmd[0] == "versi":
         client.send_message(jid, format_version(payload))
         log(f"-> {jid}: versi dikirim ({_t.time()-t0:.1f}s)")
-
-    elif cmd[0] == "refresh":
-        handle_refresh(client, jid, payload)
-        log(f"-> {jid}: update data diminta ({_t.time()-t0:.1f}s)")
 
     elif cmd[0] in ("admin_add", "admin_del", "admin_list"):
         handle_admin(client, cmd, jid, env)
@@ -1115,12 +1127,12 @@ def data_is_current(payload, max_gap_days=3):
     return gap <= max_gap_days, d
 
 
-def handle_refresh(client, jid, payload):
+def handle_refresh(client, jid, payload, force=False):
     """Perintah update data: kalau sudah terkini -> bilang terkini;
-    kalau basi -> jalankan predict_daily.py --refresh di thread, lalu
-    balas 'pembaharuan data selesai'."""
+    kalau basi (atau force) -> jalankan predict_daily.py --refresh di thread,
+    lalu balas 'pembaharuan data selesai'."""
     current, d = data_is_current(payload)
-    if current:
+    if current and not force:
         client.send_message(jid,
             f"✅ Data sudah terkini (s/d {d}).\n"
             f"Tidak perlu update. Ketik `prediksi` utk daftar terbaru.")
