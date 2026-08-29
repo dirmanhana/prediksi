@@ -281,6 +281,21 @@ def train_and_predict(df, macro_df, meta, foreign_df=None):
 
     print(f"Training : {len(train_df):,} baris | Prediksi: {len(pred_df):,} saham")
 
+    if train_df.empty:
+        # diagnostik utk menemukan akar masalah (sering: history VPS kosong/parsial)
+        nan_cols = [c for c in full_cols
+                    if feat[c].isna().mean() > 0.9] if len(feat) else full_cols
+        info = (
+            f"Data training KOSONG. feat={len(feat):,} baris, "
+            f"target terisi={int(feat['target'].notna().sum()):,}.\n"
+            f"Kolom >90% NaN: {nan_cols}\n"
+            f"Dataset mentah: {len(df):,} baris, "
+            f"{df['ticker'].nunique()} saham, "
+            f"rentang {df['tanggal'].min()} s/d {df['tanggal'].max()}\n"
+            f"Cek isi data/history/*.csv (mungkin kosong/schema beda/parsial).")
+        print(info)
+        raise RuntimeError(info)
+
     # split kronologis utk early stopping
     dates = np.sort(train_df["tanggal"].unique())
     vcut = dates[int(len(dates) * 0.85)]

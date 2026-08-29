@@ -1161,6 +1161,13 @@ def handle_refresh(client, jid, payload, force=False):
             proc = subprocess.run(
                 [sys.executable, os.path.join(BASE, "predict_daily.py"), "--refresh"],
                 cwd=BASE, capture_output=True, text=True, timeout=2400)
+            # simpan log lengkap utk diagnosa (bot hanya kirim baris terakhir)
+            try:
+                with open(os.path.join(BASE, "data", "predict_daily.log"), "a") as f:
+                    f.write(f"\n===== {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} =====\n"
+                            f"{(proc.stdout or '') + (proc.stderr or '')}\n")
+            except Exception:
+                pass
             if proc.returncode != 0:
                 err = (proc.stderr or proc.stdout or "").strip().splitlines()
                 msg = err[-1] if err else "gagal tidak diketahui"
