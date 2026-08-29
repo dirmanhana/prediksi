@@ -825,7 +825,7 @@ def parse_command(content):
     m = re.match(r"^(?:hapus user|remove user|cabut|hapus nomor)\s+(.+)$", low)
     if m:
         return ("admin_del", m.group(1))
-    if low in ("daftar user", "list user", "users", "daftar nomor",
+    if low in ("user", "daftar user", "list user", "users", "daftar nomor",
                "list nomor", "daftar allowed"):
         return ("admin_list", None)
     # watchlist: watch TLKM,BBRI / tambah / hapus / lapor
@@ -888,7 +888,7 @@ HELP_TEXT = (
     "• `versi` — info versi bot & model\n"
     "• `help` — menu ini\n\n"
     "👑 *Perintah admin* (hanya nomor admin):\n"
-    "• `tambah user 628xxxx` / `hapus user 628xxxx` / `daftar user`\n\n"
+    "• `tambah user 628xxxx` / `hapus user 628xxxx` / `user` (daftar user & jenisnya)\n\n"
     "🔔 Laporan watchlist otomatis dikirim tiap hari (lihat WATCH_REPORT_TIME di .env).\n"
     "🔒 Saham illikuid/penny dikeluarkan otomatis dari daftar.\n"
     "⚠️ Hasil bukan saran investasi."
@@ -1108,11 +1108,12 @@ def handle_admin(client, cmd, jid, env):
     elif kind == "admin_list":
         cur = load_allowed_numbers()
         admins = load_admins(env)
-        regular = sorted(cur - admins)
+        lines = [
+            f"{'👑 Admin' if n in admins else '👤 User'} — {n}"
+            for n in sorted(cur)
+        ]
         client.send_message(jid,
-            f"📋 *DAFTAR USER YANG DIIZINKAN* ({len(cur)})\n"
-            f"👑 Admin: {', '.join(sorted(admins))}\n"
-            f"👤 User: {', '.join(regular) if regular else '(belum ada)'}")
+            f"📋 *DAFTAR USER* ({len(cur)})\n" + "\n".join(lines))
         log(f"Admin {sender} lihat daftar user")
 
 
