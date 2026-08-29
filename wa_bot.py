@@ -36,6 +36,8 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
+VERSION = "v0.10.0"
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
 STATE_FILE = os.path.join(BASE, "data", "wa_bot_state.json")
@@ -857,6 +859,8 @@ def parse_command(content):
         return ("rekap", None)
     if low in ("help", "bantuan", "menu"):
         return ("help", None)
+    if low in ("versi", "version", "versi bot", "cek versi"):
+        return ("versi", None)
     return None
 
 
@@ -873,6 +877,7 @@ HELP_TEXT = (
     "• `tambah TLKM` / `hapus TLKM` — ubah watchlist\n"
     "• `lapor` — laporan status semua saham watchlist\n"
     "• `update` / `refresh` — ambil data terbaru + retrain (jika data basi)\n"
+    "• `versi` — info versi bot & model\n"
     "• `help` — menu ini\n\n"
     "👑 *Perintah admin* (hanya nomor admin):\n"
     "• `tambah user 628xxxx` / `hapus user 628xxxx` / `daftar user`\n\n"
@@ -880,6 +885,28 @@ HELP_TEXT = (
     "🔒 Saham illikuid/penny dikeluarkan otomatis dari daftar.\n"
     "⚠️ Hasil bukan saran investasi."
 )
+
+
+def format_version(payload):
+    """Info versi bot + model — utk verifikasi cepat apakah sudah update."""
+    git = ""
+    try:
+        r = subprocess.run(["git", "-C", BASE, "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0:
+            git = f" ({r.stdout.strip()})"
+    except Exception:
+        pass
+    lines = [
+        f"🤖 *Bot Prediksi Saham IDX* — {VERSION}{git}",
+        f"🧠 Model: {payload.get('model', '?')} | {payload.get('fitur', '?')} fitur | "
+        f"AUC {payload.get('valid_auc', 0):.4f}",
+        f"📅 Prediksi utk: {payload.get('tanggal_prediksi', '?')} | "
+        f"Data s/d: {payload.get('data_sampai', '?')}",
+        f"📊 {payload.get('jumlah_saham', '?')} saham | threshold {payload.get('threshold_optimal', 0.3)}",
+        "⚠️ Bukan saran investasi.",
+    ]
+    return "\n".join(lines)
 
 
 def handle_watch(client, cmd, jid):
@@ -1005,6 +1032,10 @@ def handle_command(client, msg, env):
     elif cmd[0] == "help":
         client.send_message(jid, HELP_TEXT)
         log(f"-> {jid}: help dikirim ({_t.time()-t0:.1f}s)")
+
+    elif cmd[0] == "versi":
+        client.send_message(jid, format_version(payload))
+        log(f"-> {jid}: versi dikirim ({_t.time()-t0:.1f}s)")
 
     elif cmd[0] == "refresh":
         handle_refresh(client, jid, payload)
