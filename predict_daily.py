@@ -136,8 +136,12 @@ def refresh_history(tickers):
             continue
         df.insert(0, "ticker", tk)
         if old is not None and not old.empty:
-            old = old.drop(columns=["ticker"]) if "ticker" in old.columns else old
             merged = pd.concat([old, df])
+            # FIX: semua baris file ini milik saham tk — jangan biarkan kolom
+            # ticker kosong (sebelumnya old.drop(columns=["ticker"]) membuat
+            # baris lama jadi NaN → groupby di pandas 3.x membuangnya →
+            # fitur NaN massal → data training kosong).
+            merged["ticker"] = tk
             # normalisasi ulang tanggal (defensif: CSV lama vs fetch baru)
             merged["tanggal"] = pd.to_datetime(merged["tanggal"])
             merged = merged.drop_duplicates(subset=["tanggal"], keep="last")
@@ -158,7 +162,11 @@ def rebuild_parquet(tickers):
     for tk in tickers:
         p = os.path.join(HIST_DIR, f"{tk}.csv")
         if os.path.exists(p) and os.path.getsize(p) > 0:
-            frames.append(pd.read_csv(p, parse_dates=["tanggal"]))
+            d = pd.read_csv(p, parse_dates=["tanggal"])
+            # FIX defensif: pastikan kolom ticker terisi dari nama file —
+            # cegah file lama yang kolom ticker-nya kosong merusak groupby.
+            d["ticker"] = tk
+            frames.append(d)
     if not frames:
         sys.exit("Tidak ada data di data/history/. Jalankan: python get_history_id.py 5")
     big = pd.concat(frames, ignore_index=True)
