@@ -114,26 +114,39 @@ def fetch_range(s, crumb, symbol, t1, t2, is_macro=False):
 
 # ---------------------------------------------------------------- data
 def refresh_history(tickers):
-    """Update incremental: fetch hanya hari yang belum ada utk tiap saham."""
+    """Update incremental: fetch hanya hari yang belum ada utk tiap saham.
+
+    Return (n_updated, max_date, n_fetched):
+      n_updated = berapa saham yg BENAR-BENAR dapat baris data baru
+      max_date  = tanggal data terbaru (Timestamp atau None)
+      n_fetched = berapa saham yg API Yahoo-nya berhasil di-fetch
+                  (beda dgn n_updated: fetch bisa sukses tapi tanpa data baru)
+    Dipakai utk notifikasi 'data sudah terkini' & skip retrain."""
     s, crumb = yahoo_session()
     os.makedirs(HIST_DIR, exist_ok=True)
     now = int(time.time())
     ok = 0
+    n_updated = 0
+    n_fetched = 0
+    max_date = None
     for i, tk in enumerate(tickers, 1):
         path = os.path.join(HIST_DIR, f"{tk}.csv")
         if os.path.exists(path):
             old = pd.read_csv(path, parse_dates=["tanggal"])
             last = old["tanggal"].max()
             t1 = int(last.timestamp()) - 5 * 86400  # 5 hari buffer (adjustment)
+            n_old = len(old)
         else:
             old = None
             t1 = now - int(YEARS * 365.25 * 86400)
+            n_old = 0
 
         df = fetch_range(s, crumb, tk, t1, now)
         if df is None or df.empty:
             if old is None:
                 print(f"  [{i}/{len(tickers)}] {tk} - tidak ditemukan")
             continue
+        n_fetched += 1
         df.insert(0, "ticker", tk)
         if old is not None and not old.empty:
             merged = pd.concat([old, df])
@@ -150,10 +163,16 @@ def refresh_history(tickers):
             merged = df
         merged.to_csv(path, index=False)
         ok += 1
+        md = merged["tanggal"].max()
+        if max_date is None or md > max_date:
+            max_date = md
+        if len(merged) > n_old:
+            n_updated += 1
         if i % 100 == 0:
             print(f"  ...refresh {i}/{len(tickers)}")
         time.sleep(0.4)
     print(f"Refresh selesai: {ok}/{len(tickers)} saham diperbarui.")
+    return n_updated, max_date, n_fetched
 
 
 def rebuild_parquet(tickers):
@@ -470,9 +489,9 @@ def _append_log(df, path):
         df.to_csv(path, index=False)
 
 
-def notify_admin(subject, detail):
-    """Kirim notifikasi error ke nomor admin via API chatetin (best-effort,
-    jangan sampai menggagalkan pipeline)."""
+def notify_admin(subject, detail, prefix="⚠️"):
+    """Kirim notifikasi (error ⚠️ / sukses ✅) ke nomor admin via API chatetin
+    (best-effort, jangan sampai menggagalkan pipeline)."""
     try:
         from wa_bot import load_env, load_admins, ChatetinClient
         env = load_env()
@@ -481,7 +500,7 @@ def notify_admin(subject, detail):
                                 env.get("CHATETIN_PASSWORD", ""))
         client.login()
         for a in load_admins(env):
-            client.send_message(a, f"⚠️ *{subject}*\n{detail[:1500]}")
+            client.send_message(a, f"{prefix} *{subject}*\n{detail[:1500]}")
             print(f"Notifikasi dikirim ke admin {a}")
     except Exception as e:
         print(f"⚠️ Gagal kirim notifikasi admin: {e}")
@@ -501,6 +520,8 @@ def main():
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--refresh", action="store_true", help="update data historis dulu")
+    ap.add_argument("--notify", action="store_true",
+                    help="kirim notifikasi WA ke admin (dipakai cron harian)")
     args = ap.parse_args()
 
     meta = pd.read_csv(LIST_FILE)
@@ -509,7 +530,7 @@ def main():
 
     if args.refresh:
         print("Refresh data historis (incremental)...")
-        refresh_history(tickers)
+        n_updated, max_date, n_fetched = refresh_history(tickers)
         # update foreign flow hari terakhir (best-effort, IDX publish setelah tutup)
         if os.path.exists(os.path.join(BASE, "data", "foreign_flow.csv")):
             print("Ambil foreign flow hari terakhir (idx.co.id, best-effort)...")
@@ -519,6 +540,16 @@ def main():
                                text=True, timeout=180)
             except Exception as e:
                 print(f"⚠️ Scrape foreign flow gagal (dilanjutkan): {e}")
+        # data sudah terambil & terbaru -> kabari admin & skip retrain berat
+        # (kecuali fetch gagal total: n_fetched==0 -> lanjut retrain dgn data lama)
+        if n_updated == 0 and n_fetched > 0:
+            d = max_date.date().isoformat() if max_date is not None else "?"
+            msg = (f"Data sudah terkini (s/d {d}) — tidak ada data baru.\n"
+                   f"Model lama tetap dipakai, tidak perlu retrain.")
+            print("✅ " + msg)
+            if args.notify:
+                notify_admin("Data sudah terkini", msg, prefix="✅")
+            return
 
     # cek kefresh-an data
     last = None
@@ -638,6 +669,16 @@ def main():
     print(f"RINGKASAN: {naik}/{len(out)} saham diprediksi NAIK besok "
           f"(prob >= {best_t:.2f}) | valid_auc={valid_auc:.4f}")
     print(f"File: {OUT_CSV}\n      {OUT_JSON}")
+
+    # notifikasi sukses ke admin (dipakai cron harian --notify)
+    if args.notify:
+        notify_admin(
+            "Pembaharuan data selesai",
+            f"📅 Data terbaru s/d {out['tanggal'].max().strftime('%Y-%m-%d')}\n"
+            f"🤖 {len(out)} saham diprediksi | AUC {valid_auc:.3f}\n"
+            f"📈 {naik} saham NAIK besok (prob ≥ {best_t:.2f})\n"
+            f"Ketik `prediksi` utk daftar lengkap.",
+            prefix="✅")
 
 
 if __name__ == "__main__":
