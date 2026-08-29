@@ -172,3 +172,62 @@ jangan digunakan untuk trading penuh tanpa validasi lebih lanjut.
 | `ensemble.py` | Ensemble XGBoost + LSTM |
 | `per_stock_models.py` | Model per-saham (20 likuid) + backtest |
 | `predict_daily.py` | **Pipeline produksi harian** |
+
+---
+
+## 9. Perbaikan label akhir pekan + fitur baru (v0.8.2–v0.9.0)
+
+**User**: "prediksi untuk besok padahal kemarin Jumat sekarang Sabtu — periksa logika"
+
+**Bug 1 (label)**: `tanggal_prediksi = data_sampai + 1 hari` tanpa akhir pekan
+→ data s/d Jumat dilabeli Sabtu. Fix: `next_trading_day()` (lewati Sabtu/Minggu).
+
+**Bug 2 (tersembunyi)**: makro (IHSG) dari Yahoo tertinggal 1 hari → baris tanggal
+terakhir gugur karena NaN makro → `data_sampai` & prediksi mundur 1 hari (prediksi
+utk hari yang sudah lewat). Fix: merge makro `merge_asof` mundur.
+
+**Fitur baru (v0.9.0)**: `kenapa KODE` (SHAP), `rekap` (rekap pasar, bisa
+auto-push via RECAP_PUSH_TIME), `riwayat KODE`, `cek KODE` diperkaya (perkiraan
+return + ukuran saran KECIL/SEDANG/BESAR), fitur RS-sektor, kalender libur IDX
+(paket holidays), notifikasi error ke admin.
+
+**Eksperimen RS-sektor** (walk-forward 12 bulan, 205.561 baris OOS):
+baseline 0.5910 vs +RS 0.5918 → delta **+0.0008 = netral**. Tetap disertakan
+utk konteks penjelasan.
+
+**Foreign flow**: tidak tersedia di sumber gratis (TradingView scanner tidak punya
+kolomnya) → tidak diimplementasikan.
+
+**Status**: prediksi utk Senin 31-08-2026 (data s/d Jumat 28-08), valid_auc 0.5811,
+45 fitur. Bot siap diuji.
+
+---
+
+## 10. Foreign flow dari idx.co.id (v0.10.0)
+
+**User**: "untuk foreign flow bisakah ambil data scrape dari https://www.idx.co.id saja?"
+
+**Investigasi**: idx.co.id diblokir Cloudflare (403) utk requests biasa —
+cloudscraper juga gagal. r.jina.ai kena CAPTCHA. Tapi **headless Chrome
+(google-chrome, sudah terinstall) MENEMBUS Cloudflare** → API resmi
+`/primary/TradingSummary/GetStockSummary?date=YYYY-MM-DD` bisa dipanggil
+via fetch() di dalam halaman (sesi CF sama), mengembalikan **ForeignBuy &
+ForeignSell per saham** (963 saham/hari).
+
+**Backfill**: `scrape_foreign_flow.py` — 1.199 hari perdagangan (2021-08 s/d
+2026-08), 1.065.585 baris, 0 gagal, ±16 menit. Resume-able + checkpoint
+tiap 40 hari; `--latest` utk incremental harian (dipanggil otomatis saat
+`predict_daily.py --refresh`).
+
+**Eksperimen fitur** (walk-forward 12 bulan, 205.561 baris OOS):
+baseline 0.5973 vs +FF 0.5938 → delta **-0.0035 = MERUGIKAN** (kalah 7/12
+bulan). Net asing per-saham ternyata tidak menambah sinyal model gabungan.
+
+**Keputusan**: `USE_FOREIGN_FLOW=False` (bukan fitur model), tapi data
+tetap ditampilkan di bot — `rekap` (Net Asing pasar: 28 Agu = -Rp 409 M,
+net jual) & `cek KODE` (beli/jual/net per saham, BBRI net +Rp 10 M).
+
+**Workaround teknis**: `merge_asof` dgn `by=` rusak di pandas 3.0.3 →
+pakai exact merge + ffill per saham (setara asof mundur, tanpa lookahead).
+
+**Status**: prediksi utk Senin 31-08-2026 (45 fitur, valid_auc 0.5819).

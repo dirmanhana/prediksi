@@ -194,6 +194,7 @@ MIN_PRICE = 200                    # Rp200 (hindari penny stock ekstrem)
 
 TRACK_FILE = os.path.join(BASE, "data", "bot_track_record.csv")
 HIST_DIR = os.path.join(BASE, "data", "history")
+MACRO_CSV = os.path.join(BASE, "data", "macro_id.csv")
 
 
 def load_predictions():
@@ -276,18 +277,212 @@ def format_single(payload, ticker):
                         f"\n🔒 *LIKUID* — layak diperdagangkan" if is_liquid(x)
                         else f"💧 Nilai transaksi: Rp {val:,.3f} M/hari"
                         f"\n⚠️ *ILLIKUID/penny* — sulit dieksekusi, hati-hati")
+            # foreign flow (net asing) dari idx.co.id
+            fnv = x.get("foreign_net_value")
+            if fnv is not None:
+                fb = x.get("foreign_buy") or 0
+                fs = x.get("foreign_sell") or 0
+                fnv_m = fnv / 1e9
+                emoji = "🟢" if fnv_m >= 0 else "🔴"
+                asing_line = (f"\n🌍 Asing: beli {fb:,.0f} / jual {fs:,.0f} lembar "
+                              f"| net {fnv_m:+,.1f} M {emoji}")
+            else:
+                asing_line = ""
+            # perkiraan return + ukuran saran (dari model regresi)
+            pr = x.get("pred_ret")
+            ret_line = f"\n📈 Perkiraan return besok: {pr * 100:+.2f}%" if pr is not None else ""
+            size = x.get("sizing")
+            size_line = f"\n⚖️ Ukuran saran (long): *{size}*" if size and size != "—" else ""
+            # rekam jejak prediksi NAIK utk saham ini
+            hit, total = ticker_track(x["ticker"])
+            if total >= 3:
+                track_line = f"\n🎯 Rekam jejak NAIK: {hit}/{total} benar ({hit / total * 100:.0f}%)"
+            elif total > 0:
+                track_line = f"\n🎯 Rekam jejak NAIK: {hit}/{total} (data kurang)"
+            else:
+                track_line = ""
             return (
                 f"📊 *{x['ticker']}* — {x.get('description', '-')}\n"
                 f"🏭 Sektor: {sektor}\n"
                 f"💵 Close terakhir: Rp {x['close']:,.0f}\n"
-                f"{liq_note}\n"
+                f"{liq_note}{asing_line}\n"
                 f"🎯 Probabilitas NAIK besok: {p:.1f}%\n"
-                f"📈 Sinyal: {x['signal']}\n"
-                f"🎚 Confidence: {conf:.1f}%\n"
+                f"📈 Sinyal: {x['signal']}{ret_line}{size_line}\n"
+                f"🎚 Confidence: {conf:.1f}%{track_line}\n"
                 f"📅 Prediksi: {payload.get('tanggal_prediksi', '?')}\n"
+                f"💡 Ketik `kenapa {x['ticker']}` utk penjelasan sinyal.\n"
                 f"⚠️ Bukan saran investasi."
             ), None
     return None, f"❌ Kode *{ticker}* tidak ditemukan. Contoh: `cek BBRI`"
+
+
+# ---------------------------------------------------------------- fitur baru
+FEATURE_LABELS = {
+    "ret_1": "return 1 hari", "ret_2": "return 2 hari", "ret_3": "return 3 hari",
+    "ret_5": "return 5 hari", "ret_10": "return 10 hari", "ret_20": "return 20 hari",
+    "log_ret_1": "log-return 1 hari", "log_ret_5": "log-return 5 hari",
+    "close_sma5": "harga vs SMA5", "close_sma10": "harga vs SMA10",
+    "close_sma20": "harga vs SMA20", "close_sma50": "harga vs SMA50",
+    "close_sma100": "harga vs SMA100", "sma20_sma50": "SMA20 vs SMA50",
+    "close_ema12": "harga vs EMA12", "close_ema26": "harga vs EMA26",
+    "macd_c": "MACD (ternormalisasi)", "macd_signal_c": "MACD signal",
+    "macd_hist_c": "MACD histogram",
+    "rsi_14": "RSI 14", "bb_pct_b": "Bollinger %B", "bb_width": "lebar Bollinger",
+    "vol_5": "volatilitas 5 hari", "vol_20": "volatilitas 20 hari",
+    "atr_ratio": "ATR / harga",
+    "vol_ratio_5": "volume vs rata2 5 hari", "vol_ratio_20": "volume vs rata2 20 hari",
+    "vol_change": "perubahan volume",
+    "hl_range": "range high-low", "gap": "gap pembukaan",
+    "dist_52w_high": "jarak dari 52w high", "dist_52w_low": "jarak dari 52w low",
+    "dayofweek": "hari dalam pekan", "month": "bulan",
+    "ihsg_ret_1": "IHSG 1 hari", "ihsg_ret_5": "IHSG 5 hari", "ihsg_ret_20": "IHSG 20 hari",
+    "ihsg_sma20": "IHSG vs SMA20",
+    "usd_ret_1": "USD/IDR 1 hari", "usd_ret_5": "USD/IDR 5 hari",
+    "usd_ret_20": "USD/IDR 20 hari", "usd_sma20": "USD/IDR vs SMA20",
+    "sector_ret_1": "return sektor (median)", "rs_sector_1": "outperform sektor 1 hari",
+    "rs_sector_5": "outperform sektor 5 hari",
+    "ff_buy_ratio": "beli asing / volume", "ff_sell_ratio": "jual asing / volume",
+    "ff_net_ratio": "net asing / volume",
+}
+
+
+def format_kenapa(payload, ticker):
+    """Jelaskan SINYAL satu saham via SHAP: fitur apa yang mendorong probabilitas."""
+    ticker = ticker.upper().replace(".JK", "")
+    item = next((x for x in payload["saham"] if x["ticker"].upper() == ticker), None)
+    if not item:
+        return None, f"❌ Kode *{ticker}* tidak ditemukan. Contoh: `kenapa BBRI`"
+    try:
+        import numpy as np
+        import pandas as pd
+        import xgboost as xgb
+        model = xgb.XGBClassifier()
+        model.load_model(os.path.join(BASE, "data", "model_daily.ubj"))
+        cols = json.load(open(os.path.join(BASE, "data", "model_daily.json")))["feature_cols"]
+        feat = pd.read_parquet(os.path.join(BASE, "data", "last_features.parquet"))
+        row = feat[feat["ticker"] == ticker]
+        if row.empty:
+            return None, f"❌ Data fitur *{ticker}* tidak ditemukan."
+        X = row[cols].astype(float)
+        contrib = model.get_booster().predict(xgb.DMatrix(X), pred_contribs=True)[0]
+        total = contrib.sum()
+        # kontribusi tiap fitur ke PROBABILITAS (gaya force plot)
+        vals = {}
+        for i, c in enumerate(contrib[:-1]):
+            without = total - contrib[i]
+            vals[cols[i]] = 1 / (1 + np.exp(-total)) - 1 / (1 + np.exp(-without))
+        pos = sorted(((v, k) for k, v in vals.items()), reverse=True)[:3]
+        neg = sorted(((v, k) for k, v in vals.items()))[:3]
+
+        def fmt(v, k):
+            label = FEATURE_LABELS.get(k, k)
+            return f"  {label}: {v * 100:+.1f}%"
+
+        lines = [
+            f"🔍 *KENAPA {ticker} → {item['signal']}*",
+            f"🎯 Probabilitas model: {item['prob_up'] * 100:.1f}%",
+            "————————————————",
+            "🔼 *Mendorong NAIK:*",
+        ] + [fmt(v, k) for v, k in pos if abs(v) > 0.001] + [
+            "————————————————",
+            "🔽 *Mendorong TURUN:*",
+        ] + [fmt(v, k) for v, k in neg if abs(v) > 0.001] + [
+            "————————————————",
+            "💡 Kontribusi = perubahan probabilitas bila fitur itu dihilangkan.",
+            "⚠️ Bukan saran investasi.",
+        ]
+        return "\n".join(lines), None
+    except Exception as e:
+        return None, f"⚠️ Gagal menghitung penjelasan: {e}"
+
+
+def format_rekap(payload):
+    """Rekap pasar: IHSG, breadth, top gainers/losers (hanya saham likuid)."""
+    import pandas as pd
+    macro = None
+    if os.path.exists(MACRO_CSV):
+        try:
+            macro = pd.read_csv(MACRO_CSV, parse_dates=["tanggal"])
+        except Exception:
+            macro = None
+    liq = liquid_saham(payload)
+    up = sum(1 for x in liq if (x.get("ret_1") or 0) > 0)
+    dn = len(liq) - up
+    val = sum((x.get("value_traded") or 0) for x in liq)
+
+    lines = [
+        "📊 *REKAP PASAR IDX*",
+        f"📅 Data s/d {payload.get('data_sampai', '?')} | "
+        f"Prediksi {payload.get('tanggal_prediksi', '?')}",
+        "———————————————",
+    ]
+    if macro is not None and not macro.empty:
+        m = macro.iloc[-1]
+        ihsg = m.get("ihsg")
+        if ihsg and not pd.isna(ihsg):
+            r1 = (m.get("ihsg_ret_1") or 0) * 100
+            r5 = (m.get("ihsg_ret_5") or 0) * 100
+            emoji = "🟢" if r1 >= 0 else "🔴"
+            lines.append(f"📈 IHSG: {ihsg:,.0f} {emoji} ({r1:+.2f}% 1h | {r5:+.2f}% 5h)")
+        usd = m.get("usd_idr")
+        if usd and not pd.isna(usd):
+            lines.append(f"💵 USD/IDR: {usd:,.0f}")
+    nf = payload.get("net_foreign") or {}
+    if nf.get("net_value") is not None:
+        nv = nf["net_value"] / 1e9
+        emoji = "🟢" if nv >= 0 else "🔴"
+        lines.append(f"🌍 *Net Asing*: {nv:+,.0f} M {emoji} "
+                     f"(tanggal {nf.get('tanggal', '?')})")
+    lines.append(f"🏦 Breadth (saham likuid): {up} naik 🟢 / {dn} turun 🔴")
+    lines.append(f"💵 Nilai transaksi likuid: Rp {val / 1e12:,.2f} T")
+    lines.append("———————————————")
+
+    g = sorted((x for x in liq if (x.get("ret_1") or 0) != 0),
+               key=lambda x: -(x.get("ret_1") or 0))[:5]
+    l = sorted((x for x in liq if (x.get("ret_1") or 0) != 0),
+               key=lambda x: (x.get("ret_1") or 0))[:5]
+    lines.append("🟢 *Top gainers (likuid):*")
+    lines += [f"  {x['ticker']:<6s} {(x.get('ret_1') or 0) * 100:+6.2f}%  "
+              f"{(x.get('description') or '')[:35]}" for x in g]
+    lines.append("🔴 *Top losers (likuid):*")
+    lines += [f"  {x['ticker']:<6s} {(x.get('ret_1') or 0) * 100:+6.2f}%  "
+              f"{(x.get('description') or '')[:35]}" for x in l]
+    lines += ["———————————————",
+              "📌 Prediksi besok: `prediksi` | penjelasan: `kenapa KODE`",
+              "⚠️ Bukan saran investasi."]
+    return "\n".join(lines), None
+
+
+def format_riwayat(payload, ticker):
+    """Riwayat prediksi satu saham (dari rekam jejak terverifikasi)."""
+    import pandas as pd
+    ticker = ticker.upper().replace(".JK", "")
+    if not os.path.exists(TRACK_FILE):
+        return None, "📭 Belum ada rekam jejak terverifikasi (butuh beberapa hari berjalan)."
+    try:
+        df = pd.read_csv(TRACK_FILE)
+    except Exception:
+        return None, "⚠️ Gagal membaca rekam jejak."
+    sub = df[df["ticker"] == ticker]
+    if sub.empty:
+        return None, f"❌ Belum ada riwayat utk *{ticker}*."
+    n_total = len(df[df["ticker"] == ticker])
+    sub = sub.sort_values("tanggal_prediksi", ascending=False).head(10)
+    lines = [f"📜 *RIWAYAT {ticker}*",
+             f"({n_total} prediksi tercatat, 10 terakhir)"]
+    for _, r in sub.iterrows():
+        arah = "NAIK ▲" if int(r["arah"]) == 1 else "TURUN ▼"
+        akt = "naik" if int(r["aktual_naik"]) == 1 else "turun"
+        ok = (int(r["arah"]) == 1 and int(r["aktual_naik"]) == 1) or \
+             (int(r["arah"]) == 0 and int(r["aktual_naik"]) == 0)
+        mark = "✅" if ok else "❌"
+        lines.append(
+            f"  {r['tanggal_prediksi']} {arah} (prob {r['prob_up']:.2f})\n"
+            f"     aktual {akt} {mark}")
+    hit = (sub["aktual_naik"].astype(int) == sub["arah"].astype(int)).mean()
+    lines.append(f"  Akurasi {len(sub)} prediksi terakhir: {hit * 100:.0f}%")
+    lines.append("⚠️ Bukan saran investasi.")
+    return "\n".join(lines), None
 
 
 # ---------------------------------------------------------------- verifikasi harian
@@ -425,16 +620,17 @@ def format_watch_report(payload, number):
     return "\n".join(lines), None
 
 
-def report_worker(client, report_time):
-    """Thread: kirim laporan watchlist otomatis tiap hari jam tertentu.
-    Setiap user menerima laporan watchlist-nya MASING-MASING
-    (daftar user dibaca dinamis via load_allowed_numbers)."""
-    last_sent = ""
+def report_worker(client, report_time, recap_time):
+    """Thread: kirim laporan watchlist & rekap pasar otomatis harian.
+    Setiap user menerima laporan watchlist-nya MASING-MASING; rekap pasar
+    dikirim ke SEMUA user diizinkan (daftar dibaca dinamis)."""
+    last_watch = ""
+    last_recap = ""
     while True:
         try:
             now = datetime.now().strftime("%H:%M")
             today = datetime.now().strftime("%Y-%m-%d")
-            if now >= report_time and last_sent != today:
+            if report_time and now >= report_time and last_watch != today:
                 payload, err = load_predictions()
                 if not err:
                     for num in load_allowed_numbers():
@@ -442,8 +638,17 @@ def report_worker(client, report_time):
                             text, _ = format_watch_report(payload, num)
                             if text:
                                 client.send_message(f"{num}@s.whatsapp.net", text)
-                                log(f"Laporan otomatis ({report_time}) -> {num}")
-                last_sent = today
+                                log(f"Laporan watchlist ({report_time}) -> {num}")
+                last_watch = today
+            if recap_time and now >= recap_time and last_recap != today:
+                payload, err = load_predictions()
+                if not err:
+                    text, _ = format_rekap(payload)
+                    if text:
+                        for num in load_allowed_numbers():
+                            client.send_message(f"{num}@s.whatsapp.net", text)
+                        log(f"Rekap pasar otomatis ({recap_time}) -> semua user")
+                last_recap = today
         except Exception as e:
             log(f"⚠️ Laporan otomatis gagal: {e}")
         time.sleep(45)
@@ -638,6 +843,18 @@ def parse_command(content):
                "perbarui", "perbarui data", "update prediksi",
                "refresh prediksi"):
         return ("refresh", None)
+    # kenapa KODE / why KODE / alasan KODE — penjelasan sinyal (SHAP)
+    m = re.match(r"^(?:kenapa|why|alasan|analisa|analisis)\s+([a-z0-9.]+)$", low)
+    if m:
+        return ("kenapa", m.group(1))
+    # riwayat KODE / track KODE — rekam jejak historis satu saham
+    m = re.match(r"^(?:riwayat|track|history|histori|rekam)\s+([a-z0-9.]+)$", low)
+    if m:
+        return ("riwayat", m.group(1))
+    # rekap pasar
+    if low in ("rekap", "rekap pasar", "ringkasan", "ringkasan pasar",
+               "market recap", "recap", "rekap harian"):
+        return ("rekap", None)
     if low in ("help", "bantuan", "menu"):
         return ("help", None)
     return None
@@ -648,7 +865,10 @@ HELP_TEXT = (
     "Perintah yang tersedia:\n"
     "• `prediksi` / `top 20` — Top 20 potensi NAIK & TURUN besok (saham LIKUID saja)\n"
     "• `top 5` / `top 10` — Top N sesuai angka\n"
-    "• `cek BBRI` — detail 1 saham (likuiditas + probabilitas)\n"
+    "• `cek BBRI` — detail 1 saham (likuiditas + probabilitas + ukuran saran)\n"
+    "• `kenapa BBRI` — penjelasan sinyal (fitur apa yg mendorong naik/turun)\n"
+    "• `rekap` — ringkasan pasar (IHSG, Net Asing, gainers/losers, breadth)\n"
+    "• `riwayat BBRI` — rekam jejak prediksi historis saham itu\n"
     "• `watch TLKM,BBRI` — set watchlist saham yang dipantau\n"
     "• `tambah TLKM` / `hapus TLKM` — ubah watchlist\n"
     "• `lapor` — laporan status semua saham watchlist\n"
@@ -757,6 +977,30 @@ def handle_command(client, msg, env):
         else:
             client.send_message(jid, text + stale)
         log(f"-> {jid}: cek {cmd[1]} ({_t.time()-t0:.1f}s)")
+
+    elif cmd[0] == "kenapa":
+        text, err = format_kenapa(payload, cmd[1])
+        if err:
+            client.send_message(jid, err)
+        else:
+            client.send_message(jid, text)
+        log(f"-> {jid}: kenapa {cmd[1]} ({_t.time()-t0:.1f}s)")
+
+    elif cmd[0] == "rekap":
+        text, err = format_rekap(payload)
+        if err:
+            client.send_message(jid, err)
+        else:
+            client.send_message(jid, text + stale)
+        log(f"-> {jid}: rekap ({_t.time()-t0:.1f}s)")
+
+    elif cmd[0] == "riwayat":
+        text, err = format_riwayat(payload, cmd[1])
+        if err:
+            client.send_message(jid, err)
+        else:
+            client.send_message(jid, text)
+        log(f"-> {jid}: riwayat {cmd[1]} ({_t.time()-t0:.1f}s)")
 
     elif cmd[0] == "help":
         client.send_message(jid, HELP_TEXT)
@@ -1084,13 +1328,15 @@ def main():
         f"nomor diizinkan: {sorted(load_allowed_numbers())} | "
         f"pesan lama sebelum {cutoff.isoformat()} diabaikan")
 
-    # thread laporan watchlist otomatis harian
+    # thread laporan watchlist + rekap pasar otomatis harian
     report_time = env.get("WATCH_REPORT_TIME", WATCH_REPORT_TIME)
+    recap_time = env.get("RECAP_PUSH_TIME", "").strip()
     import threading
     threading.Thread(target=report_worker,
-                     args=(client, report_time),
+                     args=(client, report_time, recap_time),
                      daemon=True).start()
-    log(f"Laporan watchlist otomatis: setiap hari {report_time} WIB")
+    log(f"Laporan watchlist otomatis: setiap hari {report_time} WIB"
+        + (f" | Rekap pasar: {recap_time} WIB" if recap_time else ""))
 
     processor = MessageProcessor(client, env, seen, cutoff)
     webhook_url = env.get("WEBHOOK_URL", "").strip()

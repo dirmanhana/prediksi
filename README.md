@@ -42,7 +42,10 @@ untuk memakai nomor baru.
 |---|---|
 | `prediksi` / `top 20` | Top 20 potensi NAIK ▲ & Top 20 potensi TURUN ▼ besok (saham **likuid** saja) |
 | `top 5` / `top 10` | Top N sesuai angka |
-| `cek BBRI` | Detail 1 saham (probabilitas, sektor, **likuiditas**) |
+| `cek BBRI` | Detail 1 saham (probabilitas, sektor, **likuiditas**, perkiraan return, ukuran saran, rekam jejak) |
+| `kenapa BBRI` | **Penjelasan sinyal** — fitur apa yang mendorong NAIK/TURUN (SHAP) |
+| `rekap` | **Rekap pasar**: IHSG, USD/IDR, breadth, top gainers/losers, nilai transaksi |
+| `riwayat BBRI` | **Rekam jejak historis** prediksi saham itu (terverifikasi) |
 | `watch TLKM,BBRI` / `tambah` / `hapus` | Atur **watchlist** saham yang dipantau |
 | `lapor` | Laporan status semua saham watchlist (harga, prediksi, rekam jejak) |
 | `update` / `refresh` | Ambil data terbaru + retrain (jika data basi) |
@@ -90,6 +93,17 @@ prediksi masih terkini (gap ≤ 3 hari), bot membalas *"✅ Data sudah terkini"*
 kalau basi, bot menjalankan `predict_daily.py --refresh` di background
 (±10-20 menit) lalu membalas *"✅ Pembaharuan data selesai"* + tanggal data
 dan AUC model terbaru.
+
+**Rekap pasar otomatis**: selain laporan watchlist, bot bisa push **rekap
+pasar** (IHSG, breadth, gainers/losers, **Net Asing**) ke semua user tiap
+hari — isi `RECAP_PUSH_TIME` di `.env` (mis. `18:05`); kosongkan utk
+nonaktif.
+
+**Foreign flow (net asing)**: diambil dari sumber resmi idx.co.id via
+headless Chrome (Cloudflare) — `scrape_foreign_flow.py`. Data 5 tahun di
+`data/foreign_flow.csv`; `rekap` & `cek KODE` menampilkannya. ⚠️ Hasil
+walk-forward: sebagai fitur model **merugikan** (delta AUC -0.0035), jadi
+dipakai hanya sebagai info, bukan input prediksi.
 
 ```bash
 # Setup (sekali)
@@ -145,6 +159,7 @@ header `X-Webhook-Secret`.
 | `ensemble.py` | Ensemble XGBoost + LSTM |
 | `per_stock_models.py` | Model per-saham utk 20 saham likuid + backtest trading |
 | `predict_daily.py` | **Pipeline produksi**: retrain + prediksi besok semua saham |
+| `scrape_foreign_flow.py` | Ambil **foreign flow (net asing)** per saham dari idx.co.id (headless Chrome + API resmi IDX) |
 | `wa_bot.py` | **Bot WhatsApp**: balas `prediksi`/`top N`/`cek KODE` (filter likuid + rekam jejak) |
 | `backtest_top20.py` | Backtest jujur strategi top-20 (likuiditas + biaya) |
 | `install.sh` | Skrip deploy VPS (deps, .env, systemd, cron) |
@@ -166,6 +181,10 @@ header `X-Webhook-Secret`.
 **Kesimpulan**: pendekatan gabungan (semua saham, cross-sectional) menang
 karena berbagi kekuatan statistik antar saham. Prediksi arah harian secara
 intrinsik sulit — AUC ~0.58 sudah di atas random dan stabil antar bulan.
+
+> Fitur relative-strength vs sektor diuji walk-forward (12 bulan OOS): delta
+> AUC **+0.0008 (netral)** — disertakan di produksi utk konteks penjelasan
+> sinyal (`kenapa KODE`), bukan penambah akurasi.
 
 ### ⚠️ Hasil backtest jujur strategi Top-20 (walk-forward OOS, 224 hari)
 
@@ -196,6 +215,7 @@ menerapkan filter ini; jangan berharap profit besar dari daftar ini.
 | `data/model_daily.ubj` + `.json` | Model produksi + metadata |
 | `data/predictions_tomorrow.csv` / `.json` | **Prediksi besok** (ranking + likuiditas) |
 | `data/prediction_log.csv` | Riwayat run harian (AUC, jumlah naik/turun) |
+| `data/foreign_flow.csv` | **Net asing per saham** dari idx.co.id (1.065.585 baris, 5 tahun) |
 | `data/prediction_archive.csv` | Arsip top-20 naik/turun harian (untuk verifikasi) |
 | `data/bot_track_record.csv` | Rekam jejak: hasil aktual vs prediksi bot |
 | `data/wa_watchlist.json` | Watchlist saham yang dipantau user |

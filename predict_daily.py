@@ -26,6 +26,7 @@ Output:
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
@@ -51,6 +52,15 @@ MACRO_COLS = [
     "ihsg_ret_1", "ihsg_ret_5", "ihsg_ret_20", "ihsg_sma20",
     "usd_ret_1", "usd_ret_5", "usd_ret_20", "usd_sma20",
 ]
+# Fitur relative strength vs sektor (hasil eksperimen: experiment_sector_rs.py)
+USE_SECTOR_RS = True
+RS_COLS = ["sector_ret_1", "rs_sector_1", "rs_sector_5"]
+# Fitur foreign flow (net asing) dari idx.co.id — data/foreign_flow.csv
+# HASIL EKSPERIMEN (walk-forward, 205.561 baris OOS): delta AUC -0.0035
+# => SEBAGAI FITUR MODEL MERUGIKAN. Data tetap dipakai utk INFO/tampilan bot
+# (rekap: Net Asing pasar; cek KODE: asing per saham), bukan fitur prediksi.
+USE_FOREIGN_FLOW = False
+FF_COLS = ["ff_buy_ratio", "ff_sell_ratio", "ff_net_ratio"]
 YEARS = 5
 RANDOM_STATE = 42
 
@@ -192,16 +202,68 @@ def load_macro():
 
 
 # ---------------------------------------------------------------- train & predict
-def train_and_predict(df, macro_df, meta):
-    full_cols = FEATURE_COLS + (MACRO_COLS if macro_df is not None else [])
-    print(f"Fitur: {len(FEATURE_COLS)} teknikal + "
-          f"{len(MACRO_COLS) if macro_df is not None else 0} makro = {len(full_cols)}")
-
+def train_and_predict(df, macro_df, meta, foreign_df=None):
     feat = add_features(df)
     feat = feat.replace([np.inf, -np.inf], np.nan)
 
     if macro_df is not None:
-        feat = feat.merge(macro_df[["tanggal"] + MACRO_COLS], on="tanggal", how="left")
+        # merge_asof MUNDUR: kalau fitur makro utk tanggal terakhir belum tersedia
+        # (mis. indeks IHSG di Yahoo tertinggal 1 hari), pakai nilai makro hari
+        # tersedia SEBELUMNYA. Ini mencegah baris tanggal terakhir gugur karena
+        # NaN makro (yang membuat data_sampai & prediksi mundur 1 hari).
+        feat = feat.sort_values("tanggal")
+        macro_s = macro_df[["tanggal"] + MACRO_COLS].sort_values("tanggal")
+        # samakan unit datetime (feat dari parquet = [us], makro bisa [s])
+        feat["tanggal"] = feat["tanggal"].astype("datetime64[us]")
+        macro_s["tanggal"] = macro_s["tanggal"].astype("datetime64[us]")
+        feat = pd.merge_asof(feat, macro_s, on="tanggal", direction="backward")
+
+    if USE_SECTOR_RS:
+        # ---- relative strength vs sektor (cross-sectional, tanpa lookahead) ----
+        # ret_1/ret_5 saham vs median sesektor pada TANGGAL yang sama (semua
+        # nilai diketahui saat penutupan hari tsb).
+        sector_map = dict(zip(meta["name"].astype(str), meta["sector"].astype(str)))
+        feat["sector"] = feat["ticker"].map(sector_map).fillna("UNKNOWN")
+        feat = feat.sort_values("tanggal")
+        gs = feat.groupby(["tanggal", "sector"])
+        feat["sector_ret_1"] = gs["ret_1"].transform("median")
+        feat["rs_sector_1"] = feat["ret_1"] - feat["sector_ret_1"]
+        feat["rs_sector_5"] = feat["ret_5"] - gs["ret_5"].transform("median")
+
+    # ---- data foreign flow (net asing) dari idx.co.id ----
+    # Exact merge + ffill per saham ≈ asof mundur (nilai foreign utk tanggal T
+    # diketahui saat penutupan T — tanpa lookahead). Workaround: merge_asof
+    # dgn by= bermasalah di pandas 3.0.
+    # Dipakai utk INFO (tampilan bot) SELALU; sebagai FITUR MODEL hanya kalau
+    # USE_FOREIGN_FLOW aktif (hasil eksperimen: merugikan -> nonaktif).
+    use_ff_data = foreign_df is not None and not foreign_df.empty
+    if use_ff_data:
+        ff = foreign_df[["tanggal", "ticker", "foreign_buy", "foreign_sell",
+                         "foreign_net_vol", "foreign_net_value"]].copy()
+        ff["tanggal"] = pd.to_datetime(ff["tanggal"]).astype("datetime64[us]")
+        feat["tanggal"] = feat["tanggal"].astype("datetime64[us]")
+        feat = feat.sort_values(["ticker", "tanggal"])
+        ff = ff.sort_values(["ticker", "tanggal"])
+        feat = feat.merge(ff, on=["ticker", "tanggal"], how="left")
+        ffill_cols = ["foreign_buy", "foreign_sell", "foreign_net_vol",
+                      "foreign_net_value"]
+        feat[ffill_cols] = feat.groupby("ticker")[ffill_cols].ffill()
+    use_ff_feat = USE_FOREIGN_FLOW and use_ff_data
+    if use_ff_feat:
+        vol = feat["volume"].replace(0, np.nan)
+        feat["ff_buy_ratio"] = feat["foreign_buy"] / vol
+        feat["ff_sell_ratio"] = feat["foreign_sell"] / vol
+        feat["ff_net_ratio"] = feat["foreign_net_vol"] / vol
+
+    full_cols = FEATURE_COLS + (MACRO_COLS if macro_df is not None else [])
+    if USE_SECTOR_RS:
+        full_cols = full_cols + RS_COLS
+    if use_ff_feat:
+        full_cols = full_cols + FF_COLS
+    print(f"Fitur: {len(FEATURE_COLS)} teknikal + "
+          f"{len(MACRO_COLS) if macro_df is not None else 0} makro + "
+          f"{len(RS_COLS) if USE_SECTOR_RS else 0} RS-sektor + "
+          f"{len(FF_COLS) if use_ff_feat else 0} foreign = {len(full_cols)}")
 
     # target terakhir per saham = NaN (belum ada "besok") -> tidak dipakai training
     last_idx = feat.groupby("ticker")["tanggal"].idxmax()
@@ -254,16 +316,77 @@ def train_and_predict(df, macro_df, meta):
             best_t, best_f1 = t, f1
     print(f"Threshold optimal (max F1): {best_t:.2f} (F1={best_f1:.4f})")
 
-    out = pred_df[["ticker", "tanggal", "close", "volume"]].copy()
+    # ---- model regresi: perkiraan return besok (info + sizing) ----
+    rt = df[["ticker", "tanggal"]].copy()
+    rt["ret_tomorrow"] = df.groupby("ticker")["close"].shift(-1) / df["close"] - 1
+    feat = feat.merge(rt, on=["ticker", "tanggal"], how="left")
+    reg_df = feat.dropna(subset=full_cols + ["ret_tomorrow"])
+    rdates = np.sort(reg_df["tanggal"].unique())
+    rvcut = rdates[int(len(rdates) * 0.85)]
+    tr_r = reg_df[reg_df["tanggal"] <= rvcut]
+    va_r = reg_df[reg_df["tanggal"] > rvcut]
+    reg_params = {
+        "objective": "reg:squarederror",
+        "eval_metric": "rmse",
+        "tree_method": "hist",
+        "max_depth": 5,
+        "learning_rate": 0.05,
+        "n_estimators": 2000,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "min_child_weight": 5,
+        "reg_lambda": 1.0,
+        "random_state": RANDOM_STATE,
+        "early_stopping_rounds": 100,
+    }
+    reg = xgb.XGBRegressor(**reg_params)
+    reg.fit(tr_r[full_cols], tr_r["ret_tomorrow"],
+            eval_set=[(va_r[full_cols], va_r["ret_tomorrow"])], verbose=False)
+    pred_ret = reg.predict(pred_df[full_cols].astype(float))
+    print(f"Regresi return: iterasi={reg.best_iteration} "
+          f"(rmse valid={reg.best_score:.5f})")
+
+    cols_out = ["ticker", "tanggal", "close", "volume", "ret_1"]
+    if use_ff_data:
+        cols_out += ["foreign_buy", "foreign_sell", "foreign_net_vol",
+                     "foreign_net_value"]
+    out = pred_df[cols_out].copy()
     out["prob_up"] = prob
+    out["pred_ret"] = pred_ret
     out["value_traded"] = out["close"] * out["volume"]  # Rp, hari data terakhir
     out = out.merge(meta[["name", "description", "sector", "industry"]],
                     left_on="ticker", right_on="name", how="left")
     out["signal"] = np.where(out["prob_up"] >= best_t, "NAIK ▲", "TURUN ▼")
     out["confidence"] = np.where(out["prob_up"] >= best_t, out["prob_up"], 1 - out["prob_up"])
+    out["sizing"] = np.where(
+        out["prob_up"] >= best_t,
+        np.select([out["prob_up"] >= 0.60, out["prob_up"] >= 0.50],
+                  ["BESAR", "SEDANG"], default="KECIL"),
+        "—")
     out = out.sort_values("prob_up", ascending=False).reset_index(drop=True)
     out.insert(0, "rank", range(1, len(out) + 1))
+
+    # simpan baris fitur terakhir per saham (utk fitur "kenapa KODE" di bot)
+    feat_last = pred_df[["ticker"] + full_cols].copy()
+    feat_last.to_parquet(os.path.join(BASE, "data", "last_features.parquet"), index=False)
     return out, model, full_cols, float(model.best_score), float(best_t)
+
+
+try:
+    import holidays
+    _IDX_HOL = holidays.Indonesia(years=list(range(2020, 2031)))
+except Exception:
+    _IDX_HOL = None  # paket holidays tidak terpasang -> hanya lewati akhir pekan
+
+
+def next_trading_day(d):
+    """Hari perdagangan berikutnya setelah tanggal d.
+    Lewati Sabtu/Minggu + hari libur nasional Indonesia (Idul Fitri,
+    17 Agustus, dll) jika paket holidays tersedia."""
+    nxt = d + pd.Timedelta(days=1)
+    while nxt.weekday() >= 5 or (_IDX_HOL is not None and nxt in _IDX_HOL):
+        nxt += pd.Timedelta(days=1)
+    return nxt
 
 
 def _atomic_write(df_or_str, path):
@@ -284,6 +407,23 @@ def _append_log(df, path):
         df.to_csv(path, mode="a", header=False, index=False)
     else:
         df.to_csv(path, index=False)
+
+
+def notify_admin(subject, detail):
+    """Kirim notifikasi error ke nomor admin via API chatetin (best-effort,
+    jangan sampai menggagalkan pipeline)."""
+    try:
+        from wa_bot import load_env, load_admins, ChatetinClient
+        env = load_env()
+        client = ChatetinClient(env.get("CHATETIN_BASE_URL", "https://wa.chatetin.com"),
+                                env.get("CHATETIN_USERNAME", ""),
+                                env.get("CHATETIN_PASSWORD", ""))
+        client.login()
+        for a in load_admins(env):
+            client.send_message(a, f"⚠️ *{subject}*\n{detail[:1500]}")
+            print(f"Notifikasi dikirim ke admin {a}")
+    except Exception as e:
+        print(f"⚠️ Gagal kirim notifikasi admin: {e}")
 
 
 def main():
@@ -309,6 +449,15 @@ def main():
     if args.refresh:
         print("Refresh data historis (incremental)...")
         refresh_history(tickers)
+        # update foreign flow hari terakhir (best-effort, IDX publish setelah tutup)
+        if os.path.exists(os.path.join(BASE, "data", "foreign_flow.csv")):
+            print("Ambil foreign flow hari terakhir (idx.co.id, best-effort)...")
+            try:
+                subprocess.run([sys.executable, os.path.join(BASE, "scrape_foreign_flow.py"),
+                                "--latest"], cwd=BASE, capture_output=True,
+                               text=True, timeout=180)
+            except Exception as e:
+                print(f"⚠️ Scrape foreign flow gagal (dilanjutkan): {e}")
 
     # cek kefresh-an data
     last = None
@@ -329,22 +478,45 @@ def main():
 
     macro_df = load_macro()
 
+    # foreign flow (net asing) dari idx.co.id — kalau ada file hasil scrape
+    foreign_df = None
+    ff_path = os.path.join(BASE, "data", "foreign_flow.csv")
+    if os.path.exists(ff_path):
+        try:
+            foreign_df = pd.read_csv(ff_path, parse_dates=["tanggal"])
+            print(f"Foreign flow: {len(foreign_df):,} baris, "
+                  f"{foreign_df['tanggal'].dt.date.nunique()} hari "
+                  f"(s/d {foreign_df['tanggal'].dt.date.max()})")
+        except Exception as e:
+            print(f"⚠️ Gagal baca foreign_flow.csv: {e}")
+
     print("\nFeature engineering + training + prediksi...")
-    out, model, cols, valid_auc, best_t = train_and_predict(df, macro_df, meta)
+    out, model, cols, valid_auc, best_t = train_and_predict(df, macro_df, meta, foreign_df)
 
     # tulis JSON dulu (atomik), lalu CSV — pembaca (bot) membaca JSON
+    has_ff = "foreign_net_value" in out.columns
+    rec_cols = ["rank", "ticker", "description", "sector",
+                "close", "volume", "value_traded", "ret_1",
+                "prob_up", "pred_ret", "sizing",
+                "signal", "confidence"]
+    if has_ff:
+        rec_cols += ["foreign_buy", "foreign_sell", "foreign_net_value"]
     payload = {
-        "tanggal_prediksi": (out["tanggal"].max() + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+        "tanggal_prediksi": next_trading_day(out["tanggal"].max()).strftime("%Y-%m-%d"),
         "data_sampai": out["tanggal"].max().strftime("%Y-%m-%d"),
         "jumlah_saham": int(len(out)),
         "model": "XGBoost gabungan (cross-sectional)",
         "fitur": len(cols),
         "valid_auc": round(valid_auc, 4),
         "threshold_optimal": round(best_t, 2),
-        "saham": out[["rank", "ticker", "description", "sector",
-                      "close", "volume", "value_traded",
-                      "prob_up", "signal", "confidence"]].to_dict(orient="records"),
+        "saham": out[rec_cols].to_dict(orient="records"),
     }
+    if has_ff:
+        payload["net_foreign"] = {
+            "tanggal": out["tanggal"].max().strftime("%Y-%m-%d"),
+            "net_value": round(float(out["foreign_net_value"].sum()), 0),
+            "net_vol": round(float(out["foreign_net_vol"].sum()), 0),
+        }
     _atomic_write(json.dumps(payload, ensure_ascii=False, indent=2), OUT_JSON)
     _atomic_write(out, OUT_CSV)
     print(f"Output ditulis atomik: {OUT_CSV} / {OUT_JSON}")
@@ -357,7 +529,7 @@ def main():
 
     # ---- arsip prediksi utk verifikasi harian (top-20 naik/turun LIKUID) ----
     liq = out[(out["value_traded"] >= 1_000_000_000) & (out["close"] >= 200)]
-    pred_date = (out["tanggal"].max() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    pred_date = next_trading_day(out["tanggal"].max()).strftime("%Y-%m-%d")
     data_until = out["tanggal"].max().strftime("%Y-%m-%d")
     arch = pd.concat([
         liq.head(20)[["ticker", "prob_up"]].assign(arah=1),
@@ -408,4 +580,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise  # lock/argumen — bukan error pipeline
+    except Exception as e:
+        import traceback
+        err = traceback.format_exc()
+        print(err, flush=True)
+        try:
+            notify_admin("predict_daily.py GAGAL",
+                         f"{type(e).__name__}: {e}\n{err[-900:]}")
+        except Exception:
+            pass
+        sys.exit(1)

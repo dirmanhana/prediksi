@@ -41,8 +41,11 @@
     "usd_ret_1",
     "usd_ret_5",
     "usd_ret_20",
-    "usd_sma20"
+    "usd_sma20",
+    "sector_ret_1",
+    "rs_sector_1",
+    "rs_sector_5"
   ],
-  "trained_at": "2026-08-28T18:20:20.226811",
-  "valid_auc": 0.5789
+  "trained_at": "2026-08-29T17:01:59.339693",
+  "valid_auc": 0.5819
 }

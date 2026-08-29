@@ -21,7 +21,7 @@ $PY --version || { echo "Install python3 dulu: sudo apt install python3 python3-
 
 echo "=== [2/6] Install dependensi Python (tanpa torch) ==="
 $PY -m pip install --break-system-packages \
-    pandas numpy requests xgboost scikit-learn openpyxl pyarrow \
+    pandas numpy requests xgboost scikit-learn openpyxl pyarrow holidays selenium \
     2>&1 | tail -2
 
 echo "=== [3/6] Siapkan .env ==="
@@ -37,6 +37,8 @@ else
 fi
 
 echo "=== [4/6] Data saham & historis ==="
+echo "  (catatan: scrape foreign flow butuh google-chrome terinstall:"
+echo "   sudo apt install -y google-chrome-stable || unduh dari google.com/chrome)"
 if [ ! -f "$BASE/data/stocks_id.csv" ]; then
     echo "  Mengambil daftar saham IDX (887 saham)..."
     (cd "$BASE" && $PY get_stocks_id.py)

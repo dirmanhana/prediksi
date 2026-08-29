@@ -2,6 +2,61 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.10.0] — 2026-08-29
+### Added
+- **Foreign flow (net asing) dari idx.co.id** — scraping via headless Chrome
+  (menembus Cloudflare) + API resmi `GetStockSummary` (kolom ForeignBuy /
+  ForeignSell per saham). Backfill 5 tahun selesai: `data/foreign_flow.csv`
+  (1.065.585 baris, 1.199 hari, 2021-08 s/d 2026-08).
+- `scrape_foreign_flow.py` — backfill penuh / incremental (`--latest`);
+  dipanggil otomatis saat `predict_daily.py --refresh` (best-effort).
+- **Bot**: `rekap` menampilkan **Net Asing pasar**; `cek KODE` menampilkan
+  beli/jual/net asing per saham.
+### Notes
+- **Sebagai FITUR MODEL, foreign flow MERUGIKAN**: eksperimen walk-forward
+  (12 bulan, 205.561 baris OOS) → delta AUC **-0.0035** (0.5973 → 0.5938,
+  kalah 7/12 bulan). Fitur dinonaktifkan (`USE_FOREIGN_FLOW=False`); data
+  tetap dipakai utk info/tampilan bot.
+- Workaround: `merge_asof` dengan `by=` bermasalah di pandas 3.0.3 → pakai
+  exact merge + ffill per saham (setara asof mundur, tanpa lookahead).
+
+## [v0.9.0] — 2026-08-29
+### Added
+- **`kenapa KODE`**: penjelasan sinyal per saham via SHAP (xgboost `pred_contribs`,
+  tanpa dependency baru) — fitur apa yg mendorong NAIK/TURUN. Data fitur terakhir
+  per saham disimpan di `data/last_features.parquet`.
+- **`rekap`**: ringkasan pasar (IHSG, USD/IDR, breadth saham likuid, top
+  gainers/losers, nilai transaksi). Bisa di-push otomatis harian via
+  `RECAP_PUSH_TIME` di `.env` (kosongkan utk nonaktif).
+- **`riwayat KODE`**: rekam jejak prediksi historis per saham (terverifikasi).
+- **`cek KODE` diperkaya**: perkiraan return besok (`pred_ret`, model regresi
+  XGBoost baru) + ukuran saran (KECIL/SEDANG/BESAR) + rekam jejak NAIK saham itu.
+- **Fitur relative strength vs sektor** (`sector_ret_1`, `rs_sector_1`,
+  `rs_sector_5`) di pipeline produksi. Hasil eksperimen walk-forward (12 bulan,
+  205.561 baris OOS): delta AUC **+0.0008 → netral** (tidak merugikan, 7/12 bulan
+  menang). Tetap disertakan utk konteks penjelasan sinyal.
+- **Kalender libur IDX**: `next_trading_day()` juga melewati hari libur nasional
+  Indonesia (paket `holidays`, ditambahkan ke install.sh).
+- **Notifikasi error ke admin**: kalau `predict_daily.py` gagal (cron/bot),
+  admin mendapat WA berisi ringkasan error (best-effort).
+
+### Notes
+- **Aliran asing (foreign flow) TIDAK diimplementasikan** — tidak tersedia dari
+  sumber gratis (TradingView tidak punya kolomnya, RTI berbayar, bursa.go.id
+  diblokir). Diverifikasi langsung ke scanner API.
+
+## [v0.8.2] — 2026-08-29
+### Fixed
+- **Label tanggal prediksi akhir pekan**: `tanggal_prediksi` sebelumnya dihitung
+  `data_sampai + 1 hari` — kalau data berakhir Jumat, label jadi Sabtu (bursa
+  tutup). Sekarang pakai `next_trading_day()` yang melewati Sabtu/Minggu
+  (mis. data s/d Jumat → label prediksi Senin). Berlaku utk JSON & arsip.
+- **Data makro tertinggal memotong prediksi**: fitur makro (IHSG/USD-IDR)
+  digabung dgn `merge_asof` mundur — kalau Yahoo belum punya nilai indeks utk
+  tanggal terakhir (mis. IHSG tertinggal 1 hari), dipakai nilai hari tersedia
+  sebelumnya. Sebelumnya baris tanggal terakhir gugur (NaN makro) sehingga
+  `data_sampai` & prediksi mundur 1 hari (prediksi jadi utk hari yang sudah
+  lewat).
 ## [v0.8.1] — 2026-08-28
 ### Added
 - **Admin whitelist dari WhatsApp**: nomor admin (`BOT_ADMINS` di `.env`,

@@ -48,3 +48,7 @@ data/wa_watchlist.json
 data/watchlists.json
 data/.predict_daily.lock
 data/allowed_numbers.json
+
+# Data asing (58MB, bisa diregenerate via scrape_foreign_flow.py)
+data/foreign_flow.csv
+data/last_features.parquet
