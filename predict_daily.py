@@ -211,6 +211,18 @@ def train_and_predict(df, macro_df, meta, foreign_df=None):
     feat = add_features(df)
     feat = feat.replace([np.inf, -np.inf], np.nan)
 
+    # workaround: kalau fitur hasil add_features NaN massal (mis. quirk versi
+    # pandas di VPS), coba sort+reset index dulu lalu hitung ulang.
+    if len(feat) and feat[FEATURE_COLS[0]].isna().mean() > 0.9:
+        print("⚠️ fitur NaN massal — coba sort+reset lalu hitung ulang...")
+        df2 = df.sort_values(["ticker", "tanggal"]).reset_index(drop=True)
+        feat2 = add_features(df2).replace([np.inf, -np.inf], np.nan)
+        if feat2[FEATURE_COLS[0]].isna().mean() <= 0.9:
+            feat = feat2
+            print("  ✔ berhasil dengan sort+reset")
+        else:
+            print("  ✖ tetap NaN — lanjut (diagnostik di bawah)")
+
     if macro_df is not None:
         # merge_asof MUNDUR: kalau fitur makro utk tanggal terakhir belum tersedia
         # (mis. indeks IHSG di Yahoo tertinggal 1 hari), pakai nilai makro hari
@@ -285,6 +297,24 @@ def train_and_predict(df, macro_df, meta, foreign_df=None):
         # diagnostik utk menemukan akar masalah (sering: history VPS kosong/parsial)
         nan_cols = [c for c in full_cols
                     if feat[c].isna().mean() > 0.9] if len(feat) else full_cols
+        # info lingkungan + tes groupby langsung utk pinpoint akar masalah
+        import sys as _sys
+        env = (f"pandas={pd.__version__} numpy={np.__version__} "
+               f"python={_sys.version.split()[0]}")
+        try:
+            dtypes = {c: str(df[c].dtype)
+                      for c in ["ticker", "tanggal", "open", "high", "low",
+                                "close", "volume"] if c in df.columns}
+        except Exception:
+            dtypes = {}
+        gtest = ""
+        try:
+            _g = df.groupby("ticker", sort=False)
+            _r = _g["close"].pct_change(1)
+            gtest = (f"groupby pct_change: NaN%={float(_r.isna().mean() * 100):.1f} "
+                     f"contoh={_r.dropna().head(2).tolist()}")
+        except Exception as _e:
+            gtest = f"groupby gagal: {_e}"
         info = (
             f"Data training KOSONG. feat={len(feat):,} baris, "
             f"target terisi={int(feat['target'].notna().sum()):,}.\n"
@@ -292,6 +322,9 @@ def train_and_predict(df, macro_df, meta, foreign_df=None):
             f"Dataset mentah: {len(df):,} baris, "
             f"{df['ticker'].nunique()} saham, "
             f"rentang {df['tanggal'].min()} s/d {df['tanggal'].max()}\n"
+            f"{env}\n"
+            f"dtypes={dtypes}\n"
+            f"{gtest}\n"
             f"Cek isi data/history/*.csv (mungkin kosong/schema beda/parsial).")
         print(info)
         raise RuntimeError(info)
