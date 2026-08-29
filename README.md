@@ -49,6 +49,8 @@ untuk memakai nomor baru.
 | `watch TLKM,BBRI` / `tambah` / `hapus` | Atur **watchlist** saham yang dipantau |
 | `lapor` | Laporan status semua saham watchlist (harga, prediksi, rekam jejak) |
 | `update` / `refresh` | Ambil data terbaru + retrain (jika data basi) |
+| `update paksa` | Paksa ambil data + retrain (setup VPS baru / data lama) |
+| `versi` | Info versi bot & model (cek apakah sudah update) |
 | `help` | Menu bantuan |
 
 **Keamanan**: bot hanya merespon nomor di daftar diizinkan (`ALLOWED_NUMBERS`
@@ -93,6 +95,15 @@ prediksi masih terkini (gap ≤ 3 hari), bot membalas *"✅ Data sudah terkini"*
 kalau basi, bot menjalankan `predict_daily.py --refresh` di background
 (±10-20 menit) lalu membalas *"✅ Pembaharuan data selesai"* + tanggal data
 dan AUC model terbaru.
+
+- **`update paksa`** (alias `paksa update` / `force refresh`) memaksa update
+  walau data dianggap terkini — cocok utk **setup VPS baru** atau setelah
+  `git pull` (file model/prediksi tidak ikut di-commit, jadi perlu dibangun
+  ulang). `update` biasa juga kini jalan walau file prediksi belum ada.
+- Update otomatis ikut mengambil **foreign flow hari terakhir** (Net Asing di
+  `rekap` / `cek KODE`) via `scrape_foreign_flow.py --latest`.
+- Setelah update, kirim **`versi`** utk konfirmasi versi bot (commit hash),
+  tanggal prediksi, dan AUC model.
 
 **Rekap pasar otomatis**: selain laporan watchlist, bot bisa push **rekap
 pasar** (IHSG, breadth, gainers/losers, **Net Asing**) ke semua user tiap

@@ -231,3 +231,22 @@ net jual) & `cek KODE` (beli/jual/net per saham, BBRI net +Rp 10 M).
 pakai exact merge + ffill per saham (setara asof mundur, tanpa lookahead).
 
 **Status**: prediksi utk Senin 31-08-2026 (45 fitur, valid_auc 0.5819).
+
+---
+
+## 11. Setup dari bot + verifikasi versi (v0.11.0)
+
+**User**: setelah pull di VPS, balasan bot masih seperti versi lama.
+
+**Penyebab**: file pendukung (model_daily.ubj, last_features.parquet,
+foreign_flow.csv, predictions_tomorrow.json) tidak ikut di-commit (gitignore)
+— harus dibangun ulang di VPS; service juga harus di-restart. Format `prediksi`
+memang tidak berubah (bukan indikator update).
+
+**Perbaikan**:
+- Perintah `versi` — menampilkan versi bot + commit hash + tanggal prediksi
+  + AUC → verifikasi cepat apakah VPS sudah update & data segar.
+- `update` / `refresh` kini bisa jalan TANPA file prediksi (setup VPS baru).
+- `update paksa` (alias `paksa update` / `force refresh`) — selalu jalankan
+  `predict_daily.py --refresh`, tanpa cek kefresh-an; otomatis juga update
+  foreign flow hari terakhir.

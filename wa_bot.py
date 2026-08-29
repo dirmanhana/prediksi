@@ -36,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-VERSION = "v0.10.0"
+VERSION = "v0.11.0"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
@@ -881,6 +881,7 @@ HELP_TEXT = (
     "• `tambah TLKM` / `hapus TLKM` — ubah watchlist\n"
     "• `lapor` — laporan status semua saham watchlist\n"
     "• `update` / `refresh` — ambil data terbaru + retrain (jika data basi)\n"
+    "• `update paksa` — paksa ambil data + retrain (setup VPS baru / data lama)\n"
     "• `versi` — info versi bot & model\n"
     "• `help` — menu ini\n\n"
     "👑 *Perintah admin* (hanya nomor admin):\n"

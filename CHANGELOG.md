@@ -2,6 +2,19 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.11.0] — 2026-08-29
+### Added
+- **Perintah `versi`** — info versi bot (commit hash), model, fitur, AUC, dan
+  tanggal prediksi/data — utk verifikasi cepat apakah VPS sudah update.
+- **`update paksa`** (alias `paksa update` / `force refresh`) — jalankan
+  `predict_daily.py --refresh` SELALU, tanpa cek kefresh-an data. Berguna utk
+  setup VPS baru / memaksa retrain walau data dianggap terkini.
+- **`update`/`refresh` bisa jalan tanpa file prediksi** — sebelumnya ditolak
+  ("Belum ada file prediksi") di VPS fresh; sekarang `update` otomatis jalan
+  utk setup pertama (download history 5 tahun + retrain + prediksi).
+- Perintah `update` sekarang juga menjawab utk memastikan foreign flow hari
+  terakhir ikut ter-update (via `scrape_foreign_flow.py --latest`).
+
 ## [v0.10.0] — 2026-08-29
 ### Added
 - **Foreign flow (net asing) dari idx.co.id** — scraping via headless Chrome
