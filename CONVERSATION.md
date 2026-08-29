@@ -281,3 +281,18 @@ data sudah terbaru, bisa?"
 
 Menutup kasus: habis git pull di VPS, data terlihat segar tapi model belum
 ada → update paksa tetap membangun ulang.
+
+---
+
+## 14. Diagnosa update paksa di VPS (v0.11.3)
+
+**User**: `update paksa` gagal — error berubah dari `Timestamp vs datetime.date`
+(SUDAH teratasi di 1cd6292) menjadi `IndexError ... size 0` di
+`train_and_predict` = **data training kosong**.
+
+**Kemungkinan akar**: isi `data/history/*.csv` di VPS kosong/parsial/schema
+beda → `feat` habis setelah dropna.
+
+**Perbaikan**: diagnostik jelas saat `train_df` kosong (jumlah baris, target
+terisi, kolom >90% NaN, ringkasan dataset) + simpan log lengkap ke
+`data/predict_daily.log` (bot hanya mengirim baris error terakhir).

@@ -106,6 +106,8 @@ dan AUC model terbaru.
   `rekap` / `cek KODE`) via `scrape_foreign_flow.py --latest`.
 - Setelah update, kirim **`versi`** utk konfirmasi versi bot (commit hash),
   tanggal prediksi, dan AUC model.
+- Jika update gagal, **log lengkap** tersimpan di `data/predict_daily.log`
+  (bot hanya membalas baris error terakhir) — cek file itu utk diagnosa.
 
 **Rekap pasar otomatis**: selain laporan watchlist, bot bisa push **rekap
 pasar** (IHSG, breadth, gainers/losers, **Net Asing**) ke semua user tiap

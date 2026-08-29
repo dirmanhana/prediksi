@@ -2,6 +2,16 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.11.3] — 2026-08-29
+### Fixed
+- **Diagnostik jelas saat data training kosong**: error `IndexError ... size 0`
+  di `train_and_predict` (sering: history VPS kosong/parsial/schema beda) kini
+  menampilkan info lengkap — jumlah baris fitur, target terisi, kolom dengan
+  >90% NaN, dan ringkasan dataset mentah.
+- **Log lengkap `predict_daily`**: saat `update`/`update paksa` via bot, output
+  penuh subproses disimpan ke `data/predict_daily.log` (bot hanya membalas
+  baris terakhir) — memudahkan diagnosa di VPS.
+
 ## [v0.11.2] — 2026-08-29
 ### Changed
 - **`update paksa` lebih pintar**: kalau data sudah terkini DAN semua file

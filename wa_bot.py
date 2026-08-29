@@ -36,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-VERSION = "v0.11.2"
+VERSION = "v0.11.3"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
