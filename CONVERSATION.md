@@ -266,3 +266,18 @@ with datetime.date` di `refresh_history` (sort_values).
 **Fix**: `fetch_range` kini `pd.to_datetime(ts, unit="s").normalize()`
 (Timestamp 00:00) + normalisasi defensif di `refresh_history` sebelum
 drop_duplicates/sort. Notifikasi error ke admin terbukti bekerja.
+
+---
+
+## 13. Update paksa lebih pintar (v0.11.2)
+
+**User**: "untuk update paksa, jika datanya sudah terbaru buat bot membalas
+data sudah terbaru, bisa?"
+
+**Perbaikan**: `update paksa` kini cek data segar DAN file pendukung model
+(prediksi, model_daily.ubj, model_daily.json, last_features.parquet):
+- Semua ada & segar → balas "✅ Data sudah terkini + model siap" (tanpa refresh)
+- Ada file kurang (mis. habis git pull) / data basi → refresh
+
+Menutup kasus: habis git pull di VPS, data terlihat segar tapi model belum
+ada → update paksa tetap membangun ulang.
