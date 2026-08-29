@@ -99,8 +99,10 @@ def fetch_range(s, crumb, symbol, t1, t2, is_macro=False):
             ts = res[0]["timestamp"]
             q = res[0]["indicators"]["quote"][0]
             adj = res[0]["indicators"].get("adjclose", [{}])[0].get("adjclose")
+            # tanggal dinormalisasi ke 00:00 (tanggal saja, konsisten antar
+            # sumber & dgn CSV lama) — cegah TypeError dan mismatch merge
             return pd.DataFrame({
-                "tanggal": [datetime.fromtimestamp(x).date() for x in ts],
+                "tanggal": pd.to_datetime(ts, unit="s").normalize(),
                 "open": q.get("open"), "high": q.get("high"), "low": q.get("low"),
                 "close": q.get("close"), "volume": q.get("volume"),
                 "adj_close": adj if adj else q.get("close"),
@@ -135,7 +137,10 @@ def refresh_history(tickers):
         df.insert(0, "ticker", tk)
         if old is not None and not old.empty:
             old = old.drop(columns=["ticker"]) if "ticker" in old.columns else old
-            merged = pd.concat([old, df]).drop_duplicates(subset=["tanggal"], keep="last")
+            merged = pd.concat([old, df])
+            # normalisasi ulang tanggal (defensif: CSV lama vs fetch baru)
+            merged["tanggal"] = pd.to_datetime(merged["tanggal"])
+            merged = merged.drop_duplicates(subset=["tanggal"], keep="last")
             merged = merged.sort_values("tanggal").reset_index(drop=True)
         else:
             merged = df

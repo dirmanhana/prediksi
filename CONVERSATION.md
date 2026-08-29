@@ -250,3 +250,19 @@ memang tidak berubah (bukan indikator update).
 - `update paksa` (alias `paksa update` / `force refresh`) — selalu jalankan
   `predict_daily.py --refresh`, tanpa cek kefresh-an; otomatis juga update
   foreign flow hari terakhir.
+
+---
+
+## 12. Fix crash refresh di VPS (v0.11.1)
+
+**User**: `update paksa` di VPS gagal — `TypeError: Cannot compare Timestamp
+with datetime.date` di `refresh_history` (sort_values).
+
+**Penyebab**: `fetch_range` (Yahoo) membuat kolom `tanggal` sebagai
+`datetime.date`, sedangkan CSV lama di-parse sebagai Timestamp → tipe campuran
+→ pandas 3.x menolak sort. Efek samping lain: IHSG (jam 02:00) vs USD/IDR
+(jam 23:00) punya jam berbeda → merge makro bisa kosong.
+
+**Fix**: `fetch_range` kini `pd.to_datetime(ts, unit="s").normalize()`
+(Timestamp 00:00) + normalisasi defensif di `refresh_history` sebelum
+drop_duplicates/sort. Notifikasi error ke admin terbukti bekerja.

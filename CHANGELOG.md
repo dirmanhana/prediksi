@@ -2,6 +2,17 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.11.1] — 2026-08-29
+### Fixed
+- **Crash `predict_daily.py --refresh` di VPS** (TypeError: Cannot compare
+  Timestamp with datetime.date): kolom `tanggal` hasil fetch Yahoo berupa
+  `datetime.date`, sedangkan CSV lama di-parse sebagai Timestamp → gagal saat
+  `sort_values` di pandas 3.x. Sekarang `fetch_range` mengembalikan Timestamp
+  ternormalisasi 00:00 (`.normalize()`) — konsisten dgn CSV & antar sumber
+  (IHSG vs USD/IDR punya jam berbeda → sebelumnya merge makro bisa kosong).
+- Normalisasi tanggal juga diterapkan defensif sebelum `drop_duplicates`/`sort`
+  di `refresh_history`.
+
 ## [v0.11.0] — 2026-08-29
 ### Added
 - **Perintah `versi`** — info versi bot (commit hash), model, fitur, AUC, dan
