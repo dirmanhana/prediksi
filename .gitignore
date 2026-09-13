@@ -62,5 +62,8 @@ data/backups/
 # State runtime laporan otomatis (tanggal terakhir kirim watchlist/rekap)
 data/report_state.json
 
+# State mode chat AI per user (aktif sampai kapan, jumlah pesan)
+data/ai_chat_state.json
+
 # Pratinjau PNG (hanya utk inspeksi lokal; PDF-nya yang diarsipkan ke git)
 data/reports/pratinjau.png

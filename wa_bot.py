@@ -38,7 +38,7 @@ import requests
 
 from waktu import now_wib, today_wib
 
-VERSION = "v0.13.1"
+VERSION = "v0.14.0"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
@@ -1017,6 +1017,13 @@ def parse_command(content):
     if low in ("rekap", "rekap pasar", "ringkasan", "ringkasan pasar",
                "market recap", "recap", "rekap harian"):
         return ("rekap", None)
+    # mode chat AI: chat on / chat off / chat (status)
+    if low in ("chat on", "ai on", "chatbot on", "on chat"):
+        return ("chat", "on")
+    if low in ("chat off", "ai off", "chatbot off", "off chat", "stop chat"):
+        return ("chat", "off")
+    if low in ("chat", "chat status", "ai", "ai status", "chatbot"):
+        return ("chat", "status")
     if low in ("help", "bantuan", "menu"):
         return ("help", None)
     if low in ("versi", "version", "versi bot", "cek versi"):
@@ -1035,6 +1042,7 @@ HELP_TEXT = (
     "• `riwayat BBRI` — rekam jejak prediksi historis saham itu\n"
     "• `monev` / `monev 30` — hasil prediksi vs AKTUAL (model + penutupan sesi 1 & 2)\n"
     "  ↳ otomatis dikirim juga *PDF DATA BOT TRADING* (top-10 naik, 2 minggu)\n"
+    "• `chat on` / `chat off` — mode tanya-jawab dengan **AI** soal semua data; `chat` = status\n"
     "• `watch TLKM,BBRI` — set watchlist saham yang dipantau\n"
     "• `tambah TLKM` / `hapus TLKM` — ubah watchlist\n"
     "• `lapor` — laporan status semua saham watchlist\n"
@@ -1382,11 +1390,12 @@ def handle_refresh(client, jid, payload, force=False):
 class MessageProcessor:
     """Proses satu pesan masuk — dipakai bersama oleh polling & webhook."""
 
-    def __init__(self, client, env, seen, cutoff):
+    def __init__(self, client, env, seen, cutoff, ai=None):
         self.client = client
         self.env = env
         self.seen = seen
         self.cutoff = cutoff
+        self.ai = ai
 
     def handle(self, m, jid=None):
         mid = m.get("id")
@@ -1407,15 +1416,67 @@ class MessageProcessor:
         self.seen.add(mid)
         content = (m.get("content") or "").strip()
         log(f"Pesan baru dari {sender}: {content[:60]!r}")
-        if parse_command(content):
-            self.client.send_typing(jid or f"{sender}@s.whatsapp.net", "start")
+        target = jid or f"{sender}@s.whatsapp.net"
+        cmd = parse_command(content)
+        if cmd and cmd[0] == "chat":
+            handle_chat_command(self.client, self.ai, target, cmd[1])
+            return True
+        if cmd:
+            self.client.send_typing(target, "start")
             try:
                 handle_command(self.client, m, self.env)
             finally:
-                self.client.send_typing(jid or f"{sender}@s.whatsapp.net", "stop")
+                self.client.send_typing(target, "stop")
+        elif self.ai and self.ai.is_active(sender):
+            self._handle_ai(target, sender, content)
         else:
             log(f"-> {sender}: bukan perintah, diabaikan (tanpa balasan)")
         return True
+
+    def _handle_ai(self, target, sender, content):
+        """Teruskan pesan non-perintah ke AI (mode chat aktif)."""
+        self.client.send_typing(target, "start")
+        try:
+            reply = self.ai.ask(sender, content)
+        except Exception as e:
+            reply = f"⚠️ AI error: {type(e).__name__}: {e}"
+        finally:
+            self.client.send_typing(target, "stop")
+        if reply:
+            self.client.send_message(target, reply)
+            log(f"-> {target}: jawaban AI terkirim ({len(reply)} char)")
+
+
+def handle_chat_command(client, ai, jid, action):
+    """Aktifkan/nonaktifkan/lihat status mode chat AI (per user)."""
+    if ai is None or not ai.enabled():
+        client.send_message(jid, "⚠️ Fitur AI belum aktif "
+                                 "(AGNES_API_KEY belum diisi di .env).")
+        return
+    sender = (jid or "").split("@")[0]
+    if action == "on":
+        st = ai.activate(sender)
+        client.send_message(jid,
+            "🤖 *Mode AI aktif!*\n"
+            "Silakan tanya apa saja soal data saham (prediksi, sesi 1/2, monev, rekap).\n"
+            f"⏳ Berlaku {st['window_menit']:.0f} menit, diperpanjang tiap pesan "
+            f"(maks {st['maks_menit']:.0f} menit).\n"
+            "Ketik `chat off` untuk berhenti. Perintah biasa tetap jalan.\n"
+            "⚠️ Bukan saran investasi.")
+    elif action == "off":
+        ai.deactivate(sender)
+        client.send_message(jid, "🤖 Mode AI dimatikan. Ketik `chat on` untuk aktif lagi.")
+    else:
+        st = ai.status(sender)
+        if st["aktif"]:
+            client.send_message(jid,
+                f"🤖 *Mode AI: AKTIF* — sisa {st['sisa_menit']:.1f} menit\n"
+                f"📨 Pesan hari ini: {st['pesan_hari_ini']}/{st['batas_harian']}\n"
+                f"🧠 Model: {st['model']}")
+        else:
+            client.send_message(jid,
+                "🤖 Mode AI: *nonaktif*\nKetik `chat on` untuk mulai bertanya ke AI.")
+    log(f"-> {jid}: chat {action}")
 
 
 # ---------------------------------------------------------------- webhook
@@ -1587,7 +1648,21 @@ def main():
         f"{env.get('MONEV_TIME', '18:30')} WIB | auto-push="
         f"{env.get('MONEV_AUTO_PUSH', '1')}")
 
-    processor = MessageProcessor(client, env, seen, cutoff)
+    # mode chat AI (opsional) — aktif kalau AGNES_API_KEY diisi
+    ai = None
+    try:
+        import ai_chat
+        ai = ai_chat.AIChat(env, logger=log)
+        if ai.enabled():
+            log(f"Mode AI siap: model {ai.model} (fallback {ai.fallback}) | "
+                f"window {ai.window_min:.0f}m/maks {ai.max_min:.0f}m | "
+                f"batas {ai.max_msg_day} pesan/hari")
+        else:
+            log("Mode AI nonaktif (AGNES_API_KEY kosong) — `chat on` akan menolak")
+    except Exception as e:
+        log(f"⚠️ Gagal inisialisasi AI: {type(e).__name__}: {e}")
+
+    processor = MessageProcessor(client, env, seen, cutoff, ai=ai)
     webhook_url = env.get("WEBHOOK_URL", "").strip()
 
     if webhook_url:

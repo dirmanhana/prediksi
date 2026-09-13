@@ -2,6 +2,27 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.14.0] — 2026-09-13
+### Added
+- **Mode chat AI** (`chat on` / `chat off` / `chat`) — user bisa tanya-jawab
+  dengan AI soal semua data saham. Jendela **sliding 5 menit** (diperpanjang
+  tiap pesan) dengan **batas maksimal 30 menit** sejak aktivasi, plus batas
+  40 pesan/user/hari. State per user di `data/ai_chat_state.json` (tahan restart).
+- **Konteks 2 lapis (A+B):** ringkasan data di system prompt + **tool calling**
+  (`get_prediksi`, `get_top`, `get_sesi`, `get_monev`, `get_rekap`,
+  `get_watchlist`) sehingga AI mengambil detail dari data lokal, bukan mengarang.
+- **Footer icon bot** di SETIAP jawaban AI + disclaimer "bukan saran investasi".
+- Provider OpenAI-compatible `apihub.agnes-ai.com`. Model utama
+  **`agnes-3.0-flash`** (tercepat: ~54 token/detik, andal 5/5) dengan fallback
+  otomatis **`agnes-2.5-flash`**. `agnes-2.0-flash` dihindari (sering 429).
+- Konfigurasi `.env`: `AGNES_BASE_URL`, `AGNES_API_KEY`, `AGNES_MODEL`,
+  `AGNES_MODEL_FALLBACK`, `AI_CHAT_WINDOW`, `AI_CHAT_MAX`, `AI_CHAT_MAX_MSG_DAY`.
+
+### Catatan
+- Perintah biasa tetap diprioritaskan; AI hanya menangani pesan non-perintah
+  saat mode aktif.
+- Tool hanya **membaca** data lokal (tidak pernah menyentuh `.env`/API key).
+
 ## [v0.13.1] — 2026-09-13
 ### Changed
 - **PDF `DATA BOT TRADING` kini diarsipkan ke git.** `data/reports/*.pdf` ikut
