@@ -46,6 +46,6 @@
     "rs_sector_1",
     "rs_sector_5"
   ],
-  "trained_at": "2026-08-29T12:23:07.205321",
-  "valid_auc": 0.5809
+  "trained_at": "2026-09-13T02:07:21.725701",
+  "valid_auc": 0.573
 }
