@@ -791,6 +791,8 @@ def monev_worker(client, env):
                                         f"{admin}@s.whatsapp.net", pdf,
                                         caption="📄 *DATA BOT TRADING* — top 10 BOT naik, "
                                                 "sesi 1 & 2 (2 minggu terakhir).")
+                                    log(f"PDF monev terkirim ke admin {admin} "
+                                        f"({os.path.basename(pdf)})")
                                 except Exception as e:
                                     log(f"⚠️ Kirim PDF ke admin {admin} gagal: {e}")
                     except Exception as e:
