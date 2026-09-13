@@ -2,6 +2,11 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.14.1] — 2026-09-13
+### Changed
+- **Footer jawaban AI tidak lagi menampilkan nama model** — jadi cukup
+  `🤖 _Dijawab AI · bisa keliru · bukan saran investasi_`.
+
 ## [v0.14.0] — 2026-09-13
 ### Added
 - **Mode chat AI** (`chat on` / `chat off` / `chat`) — user bisa tanya-jawab

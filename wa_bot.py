@@ -38,7 +38,7 @@ import requests
 
 from waktu import now_wib, today_wib
 
-VERSION = "v0.14.0"
+VERSION = "v0.14.1"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")

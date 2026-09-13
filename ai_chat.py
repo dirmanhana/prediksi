@@ -278,7 +278,7 @@ class AIChat:
     # -- footer ------------------------------------------------------
     def footer(self):
         return ("\n\n━━━━━━━━━━\n"
-                f"🤖 _Dijawab AI ({self.model}) · bisa keliru · bukan saran investasi_")
+                "🤖 _Dijawab AI · bisa keliru · bukan saran investasi_")
 
     # -- state -------------------------------------------------------
     def _load_state(self):
