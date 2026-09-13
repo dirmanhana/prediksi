@@ -2,6 +2,23 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.13.0] — 2026-09-13
+### Added
+- **Laporan PDF `DATA BOT TRADING`** dari perintah `monev` (mirip spreadsheet
+  tim): per tanggal prediksi, daftar **Top 10 saham prediksi NAIK** beserta
+  pergerakan penutupan **SESI 1 & SESI 2**. Return berbasis **close hari
+  sebelumnya** (sama dgn spreadsheet tim), dan `SUSPEND` bila tidak ada
+  transaksi. Dikirim otomatis menyusul pesan teks `monev`, dan tiap monev
+  harian ke semua admin.
+- `report_pdf.py` — generator PDF (matplotlib, A4 landscape, 2 tanggal/blok
+  berdampingan). Output `data/reports/laporan_bot_YYYYMMDD.pdf` (tidak
+  di-commit).
+- `ChatetinClient.send_file()` — kirim file via endpoint `/send/file`
+  (multipart, field `file`).
+
+### Changed
+- Perintah `monev` kini mengirim **teks + PDF**.
+
 ## [v0.12.2] — 2026-09-13
 ### Fixed
 - **Laporan watchlist/rekap terkirim ulang setiap restart bot** setelah jam

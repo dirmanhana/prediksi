@@ -38,7 +38,7 @@ import requests
 
 from waktu import now_wib, today_wib
 
-VERSION = "v0.12.2"
+VERSION = "v0.13.0"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
@@ -168,6 +168,43 @@ class ChatetinClient:
         if data.get("code") != "SUCCESS":
             raise RuntimeError(f"kirim pesan gagal: {data.get('message')}")
         return data
+
+    def send_file(self, phone, file_path, caption="",
+                  filename=None, mime="application/pdf"):
+        """Kirim file (mis. PDF laporan) via `/send/file` (multipart)."""
+        if not phone.endswith("@s.whatsapp.net"):
+            phone = f"{phone}@s.whatsapp.net"
+        filename = filename or os.path.basename(file_path)
+        data = {"phone": phone}
+        if caption:
+            data["caption"] = caption
+
+        def _post():
+            with open(file_path, "rb") as f:
+                return self.s.post(f"{self.base}/send/file", data=data,
+                                   files={"file": (filename, f, mime)}, timeout=180)
+
+        attempts = 0
+        while True:
+            try:
+                r = _post()
+            except requests.RequestException as e:
+                attempts += 1
+                if attempts >= 3:
+                    raise
+                log(f"kirim file error: {e}; coba lagi ({attempts}/3)")
+                time.sleep(2 * attempts)
+                continue
+            if r.status_code == 401 and attempts < 2:
+                attempts += 1
+                self.login(force=True)
+                continue
+            if r.status_code in (429, 500, 502, 503) and attempts < 3:
+                attempts += 1
+                time.sleep(2 ** attempts + 1)
+                continue
+            r.raise_for_status()
+            return r.json()
 
     def send_typing(self, phone, action="start"):
         """Indikator mengetik (start/stop) — biar balasan terasa cepat.
@@ -743,6 +780,21 @@ def monev_worker(client, env):
                             "📊 *Monev harian selesai & ter-upload.*\n"
                             f"Prediksi dievaluasi: {r['eval_rows']} baris "
                             f"({r['capture_ok']} saham di-capture).")
+                    # kirim PDF "DATA BOT TRADING" ke semua admin
+                    try:
+                        import report_pdf as _rp
+                        pdf = _rp.build_pdf(days=14)
+                        if pdf:
+                            for admin in load_admins(env):
+                                try:
+                                    client.send_file(
+                                        f"{admin}@s.whatsapp.net", pdf,
+                                        caption="📄 *DATA BOT TRADING* — top 10 BOT naik, "
+                                                "sesi 1 & 2 (2 minggu terakhir).")
+                                except Exception as e:
+                                    log(f"⚠️ Kirim PDF ke admin {admin} gagal: {e}")
+                    except Exception as e:
+                        log(f"⚠️ Generator PDF gagal: {type(e).__name__}: {e}")
                 except Exception as e:
                     log(f"⚠️ Monev harian gagal (akan dicoba lagi): "
                         f"{type(e).__name__}: {e}")
@@ -979,6 +1031,7 @@ HELP_TEXT = (
     "• `rekap` — ringkasan pasar (IHSG, Net Asing, gainers/losers, breadth)\n"
     "• `riwayat BBRI` — rekam jejak prediksi historis saham itu\n"
     "• `monev` / `monev 30` — hasil prediksi vs AKTUAL (model + penutupan sesi 1 & 2)\n"
+    "  ↳ otomatis dikirim juga *PDF DATA BOT TRADING* (top-10 naik, 2 minggu)\n"
     "• `watch TLKM,BBRI` — set watchlist saham yang dipantau\n"
     "• `tambah TLKM` / `hapus TLKM` — ubah watchlist\n"
     "• `lapor` — laporan status semua saham watchlist\n"
@@ -1156,7 +1209,20 @@ def handle_command(client, msg, env):
             text = _er.summary_text(df, days=cmd[1])
         except Exception as e:
             text = f"⚠️ Gagal membangun monev: {type(e).__name__}: {e}"
+        text += "\n\n📄 Laporan *DATA BOT TRADING* (PDF) dikirim menyusul."
         client.send_message(jid, text)
+        # kirim juga PDF "DATA BOT TRADING" (top-10 naik, sesi 1 & 2, 2 minggu)
+        try:
+            import report_pdf as _rp
+            pdf = _rp.build_pdf(days=14)
+            if pdf:
+                client.send_file(
+                    jid, pdf,
+                    caption="📄 *DATA BOT TRADING* — Top 10 BOT naik, sesi 1 & 2 "
+                            "(2 minggu terakhir). Return basis close hari sebelumnya.")
+                log(f"-> {jid}: monev PDF terkirim ({os.path.basename(pdf)})")
+        except Exception as e:
+            log(f"⚠️ Gagal kirim PDF monev: {type(e).__name__}: {e}")
         log(f"-> {jid}: monev {cmd[1]} hari ({_t.time()-t0:.1f}s)")
 
     elif cmd[0] == "help":

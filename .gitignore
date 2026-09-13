@@ -61,3 +61,6 @@ data/backups/
 
 # State runtime laporan otomatis (tanggal terakhir kirim watchlist/rekap)
 data/report_state.json
+
+# Laporan PDF (dibuat ulang tiap monev, tidak perlu di-commit)
+data/reports/
