@@ -52,3 +52,8 @@ data/allowed_numbers.json
 # Data asing (58MB, bisa diregenerate via scrape_foreign_flow.py)
 data/foreign_flow.csv
 data/last_features.parquet
+
+# Data sesi (Yahoo 15m) — disimpan lokal, TIDAK di-commit.
+# Yahoo hanya menyediakan ~60 hari terakhir, jadi file ini tidak bisa
+# diregenerate setelah lewat jendela tsb (backup terpisah disarankan).
+data/session_bars.csv

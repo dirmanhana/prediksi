@@ -2,6 +2,32 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.12.0] — 2026-09-13
+### Added
+- **Perintah `monev`** (alias `evaluasi`) — laporan hasil prediksi vs AKTUAL,
+  memuat penutupan **sesi 1** (12:00 / Jumat 11:30 WIB) dan **sesi 2**
+  (16:00 WIB = penutupan resmi). Menampilkan 3 tolok ukur: model close→close,
+  entry pagi → exit sesi 1, dan entry pagi → exit penutupan — plus rata-rata
+  return & hit-rate per hari.
+- **`session_data.py` + `capture_session.py`** — ambil bar 15-menit Yahoo untuk
+  saham yang diprediksi (top-20 NAIK + top-20 TURUN), lalu simpan penutupan per
+  sesi ke `data/session_bars.csv`. Yahoo hanya menyediakan interval 15m untuk
+  ~60 hari terakhir, jadi data harus disimpan agar tidak hilang.
+- **`eval_report.py`** — bangun `data/eval/prediction_eval.csv` +
+  `data/eval/monev_summary.json`, lalu auto-commit + push ke origin.
+- **Monev harian otomatis** (thread `monev_worker`) setelah `MONEV_TIME`
+  (default 16:10 WIB) + notifikasi ke admin.
+
+### Fixed
+- **Verifikasi rekam jejak mandek di mode POLLING** — `verify_and_record()`
+  dulu hanya dijalankan sekali saat start, karena loop periodiknya cuma ada di
+  mode webhook. Sekarang dijalankan tiap 10 menit dari `monev_worker` (berlaku
+  di kedua mode), sehingga `bot_track_record.csv` tidak lagi basi.
+
+### Catatan
+- Server berjalan di UTC; jadwal monev dihitung dari WIB (UTC+7).
+- `data/session_bars.csv` TIDAK di-commit; hanya `data/eval/` yang di-commit.
+
 ## [v0.11.3] — 2026-08-29
 ### Fixed
 - **Diagnostik jelas saat data training kosong**: error `IndexError ... size 0`

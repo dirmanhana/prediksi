@@ -46,6 +46,7 @@ untuk memakai nomor baru.
 | `kenapa BBRI` | **Penjelasan sinyal** — fitur apa yang mendorong NAIK/TURUN (SHAP) |
 | `rekap` | **Rekap pasar**: IHSG, USD/IDR, breadth, top gainers/losers, nilai transaksi |
 | `riwayat BBRI` | **Rekam jejak historis** prediksi saham itu (terverifikasi) |
+| `monev` / `monev 30` | **Hasil prediksi vs AKTUAL** — hit-rate model + penutupan **sesi 1** & **sesi 2**, rata-rata return (7 hari terakhir, atau N hari) |
 | `watch TLKM,BBRI` / `tambah` / `hapus` | Atur **watchlist** saham yang dipantau |
 | `lapor` | Laporan status semua saham watchlist (harga, prediksi, rekam jejak) |
 | `update` / `refresh` | Ambil data terbaru + retrain (jika data basi) |
@@ -174,6 +175,9 @@ header `X-Webhook-Secret`.
 | `ensemble.py` | Ensemble XGBoost + LSTM |
 | `per_stock_models.py` | Model per-saham utk 20 saham likuid + backtest trading |
 | `predict_daily.py` | **Pipeline produksi**: retrain + prediksi besok semua saham |
+| `session_data.py` | Ambil & olah bar 15m Yahoo jadi **penutupan sesi 1 & 2** per saham |
+| `capture_session.py` | Simpan penutupan sesi 1 & 2 saham prediksi ke `data/session_bars.csv` |
+| `eval_report.py` | **Monev**: evaluasi prediksi vs aktual (→ `data/eval/`) + auto-push |
 | `scrape_foreign_flow.py` | Ambil **foreign flow (net asing)** per saham dari idx.co.id (headless Chrome + API resmi IDX) |
 | `wa_bot.py` | **Bot WhatsApp**: balas `prediksi`/`top N`/`cek KODE` (filter likuid + rekam jejak) |
 | `backtest_top20.py` | Backtest jujur strategi top-20 (likuiditas + biaya) |

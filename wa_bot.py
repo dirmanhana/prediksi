@@ -36,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-VERSION = "v0.11.3"
+VERSION = "v0.12.0"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
@@ -659,6 +659,67 @@ def report_worker(client, report_time, recap_time):
         time.sleep(45)
 
 
+def notify_admins(client, env, message):
+    """Kirim pesan ke semua nomor admin (abaikan kegagalan per nomor)."""
+    for admin in load_admins(env):
+        try:
+            client.send_message(f"{admin}@s.whatsapp.net", message)
+        except Exception as e:
+            log(f"⚠️ Notifikasi admin {admin} gagal: {e}")
+
+
+def monev_worker(client, env):
+    """Thread: verifikasi berkala (supaya jalan juga di mode POLLING) +
+    capture sesi & bangun laporan monev otomatis harian setelah MONEV_TIME (WIB),
+    lalu auto-commit + push ke origin.
+
+    Catatan: server berjalan di UTC, jadi jadwal dihitung dari WIB (UTC+7).
+    """
+    monev_time = (env.get("MONEV_TIME", "16:10") or "").strip()
+    auto_push = (env.get("MONEV_AUTO_PUSH", "1") or "1").strip().lower() \
+        not in ("0", "false", "no", "off", "")
+    try:
+        cap_days = int(env.get("MONEV_DAYS", "55"))
+    except (TypeError, ValueError):
+        cap_days = 55
+    last_monev = ""
+    last_verify = 0.0
+    time.sleep(15)  # beri waktu bot selesai start
+    while True:
+        try:
+            now_wib = datetime.now(timezone.utc) + timedelta(hours=7)
+            # verifikasi rekam jejak tiap 10 menit (dulu hanya jalan di mode webhook)
+            if time.time() - last_verify >= 600:
+                last_verify = time.time()
+                try:
+                    track = verify_and_record()
+                    if track:
+                        log(track)
+                except Exception as e:
+                    log(f"⚠️ Verifikasi berkala gagal: {e}")
+            # monev harian setelah jam yg ditentukan (WIB)
+            today = now_wib.strftime("%Y-%m-%d")
+            if monev_time and now_wib.strftime("%H:%M") >= monev_time \
+                    and last_monev != today:
+                last_monev = today
+                log("Monev harian: capture sesi 1 & 2 + bangun laporan...")
+                try:
+                    import eval_report as _er
+                    r = _er.run_daily(days=cap_days, auto_push=auto_push)
+                    log(f"Monev selesai: {r['capture_ok']}/{r['capture_tickers']} saham, "
+                        f"{r['eval_rows']} baris eval, push={r['push']}")
+                    if r["push"] == "pushed":
+                        notify_admins(client, env,
+                            "📊 *Monev harian selesai & ter-upload.*\n"
+                            f"Prediksi dievaluasi: {r['eval_rows']} baris "
+                            f"({r['capture_ok']} saham di-capture).")
+                except Exception as e:
+                    log(f"⚠️ Monev harian gagal: {type(e).__name__}: {e}")
+        except Exception as e:
+            log(f"⚠️ monev worker error: {type(e).__name__}: {e}")
+        time.sleep(60)
+
+
 def _read_history_for(tickers):
     """Baca close utk ticker tertentu — prioritas parquet (cepat), fallback CSV."""
     try:
@@ -860,6 +921,12 @@ def parse_command(content):
     m = re.match(r"^(?:riwayat|track|history|histori|rekam)\s+([a-z0-9.]+)$", low)
     if m:
         return ("riwayat", m.group(1))
+    # monev: evaluasi hasil prediksi vs aktual (termasuk sesi 1 & 2)
+    m = re.match(r"^monev(?:\s+(\d+))?$", low)
+    if m:
+        return ("monev", int(m.group(1)) if m.group(1) else 7)
+    if low in ("evaluasi", "monitoring", "monitor", "hasil prediksi"):
+        return ("monev", 7)
     # rekap pasar
     if low in ("rekap", "rekap pasar", "ringkasan", "ringkasan pasar",
                "market recap", "recap", "rekap harian"):
@@ -880,6 +947,7 @@ HELP_TEXT = (
     "• `kenapa BBRI` — penjelasan sinyal (fitur apa yg mendorong naik/turun)\n"
     "• `rekap` — ringkasan pasar (IHSG, Net Asing, gainers/losers, breadth)\n"
     "• `riwayat BBRI` — rekam jejak prediksi historis saham itu\n"
+    "• `monev` / `monev 30` — hasil prediksi vs AKTUAL (model + penutupan sesi 1 & 2)\n"
     "• `watch TLKM,BBRI` — set watchlist saham yang dipantau\n"
     "• `tambah TLKM` / `hapus TLKM` — ubah watchlist\n"
     "• `lapor` — laporan status semua saham watchlist\n"
@@ -1048,6 +1116,17 @@ def handle_command(client, msg, env):
         else:
             client.send_message(jid, text)
         log(f"-> {jid}: riwayat {cmd[1]} ({_t.time()-t0:.1f}s)")
+
+    elif cmd[0] == "monev":
+        try:
+            import eval_report as _er
+            df = _er.build(save=True)
+            _er.save_summary(days=cmd[1])
+            text = _er.summary_text(df, days=cmd[1])
+        except Exception as e:
+            text = f"⚠️ Gagal membangun monev: {type(e).__name__}: {e}"
+        client.send_message(jid, text)
+        log(f"-> {jid}: monev {cmd[1]} hari ({_t.time()-t0:.1f}s)")
 
     elif cmd[0] == "help":
         client.send_message(jid, HELP_TEXT)
@@ -1401,6 +1480,12 @@ def main():
                      daemon=True).start()
     log(f"Laporan watchlist otomatis: setiap hari {report_time} WIB"
         + (f" | Rekap pasar: {recap_time} WIB" if recap_time else ""))
+
+    # thread verifikasi berkala + monev harian (capture sesi 1 & 2, push ke origin)
+    threading.Thread(target=monev_worker, args=(client, env), daemon=True).start()
+    log(f"Monev harian: capture sesi + laporan otomatis tiap "
+        f"{env.get('MONEV_TIME', '16:10')} WIB | auto-push="
+        f"{env.get('MONEV_AUTO_PUSH', '1')}")
 
     processor = MessageProcessor(client, env, seen, cutoff)
     webhook_url = env.get("WEBHOOK_URL", "").strip()
