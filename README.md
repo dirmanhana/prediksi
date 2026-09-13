@@ -178,6 +178,7 @@ header `X-Webhook-Secret`.
 | `session_data.py` | Ambil & olah bar 15m Yahoo jadi **penutupan sesi 1 & 2** per saham |
 | `capture_session.py` | Simpan penutupan sesi 1 & 2 saham prediksi ke `data/session_bars.csv` |
 | `eval_report.py` | **Monev**: evaluasi prediksi vs aktual (→ `data/eval/`) + auto-push |
+| `waktu.py` | Satu sumber kebenaran waktu **WIB** (`now_wib`, `today_wib`), dipakai semua script |
 | `scrape_foreign_flow.py` | Ambil **foreign flow (net asing)** per saham dari idx.co.id (headless Chrome + API resmi IDX) |
 | `wa_bot.py` | **Bot WhatsApp**: balas `prediksi`/`top N`/`cek KODE` (filter likuid + rekam jejak) |
 | `backtest_top20.py` | Backtest jujur strategi top-20 (likuiditas + biaya) |

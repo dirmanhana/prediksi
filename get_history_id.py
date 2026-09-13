@@ -30,6 +30,8 @@ import numpy as np
 import pandas as pd
 import requests
 
+from waktu import WIB, now_wib
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LIST_FILE = os.path.join(BASE_DIR, "data", "stocks_id.csv")
 HIST_DIR = os.path.join(BASE_DIR, "data", "history")
@@ -100,7 +102,7 @@ def fetch_history(s, crumb, symbol, years):
 
             df = pd.DataFrame(
                 {
-                    "tanggal": [datetime.fromtimestamp(x).date() for x in ts],
+                    "tanggal": [datetime.fromtimestamp(x, WIB).date() for x in ts],
                     "open": q.get("open"),
                     "high": q.get("high"),
                     "low": q.get("low"),
@@ -135,7 +137,7 @@ def main():
     os.makedirs(HIST_DIR, exist_ok=True)
     tickers = load_tickers(years, only)
     print(f"Jumlah saham yang akan diambil: {len(tickers)}")
-    print(f"Periode: {years} tahun ke belakang ({datetime.now().year - int(years)} - sekarang)")
+    print(f"Periode: {years} tahun ke belakang ({now_wib().year - int(years)} - sekarang)")
 
     s, crumb = get_session_with_crumb()
     ok, failed, skipped = [], [], []

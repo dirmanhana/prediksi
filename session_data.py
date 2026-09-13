@@ -21,17 +21,17 @@ Output: data/session_bars.csv
 
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pandas as pd
 import requests
+
+from waktu import WIB
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 SESSION_CSV = os.path.join(BASE, "data", "session_bars.csv")
 MAX_DAYS = 59          # batas keras Yahoo utk interval 15m ("within the last 60 days")
 DEFAULT_DAYS = 55
-
-WIB = timezone(timedelta(hours=7))
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"}

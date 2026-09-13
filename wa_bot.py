@@ -36,7 +36,9 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-VERSION = "v0.12.0"
+from waktu import now_wib, today_wib
+
+VERSION = "v0.12.1"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
@@ -53,7 +55,7 @@ DEFAULT_INTERVAL = 3
 
 # ---------------------------------------------------------------- util
 def log(msg):
-    line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
+    line = f"[{now_wib().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
     print(line, flush=True)
     try:
         with open(LOG_FILE, "a") as f:
@@ -633,8 +635,8 @@ def report_worker(client, report_time, recap_time):
     last_recap = ""
     while True:
         try:
-            now = datetime.now().strftime("%H:%M")
-            today = datetime.now().strftime("%Y-%m-%d")
+            now = now_wib().strftime("%H:%M")
+            today = now_wib().strftime("%Y-%m-%d")
             if report_time and now >= report_time and last_watch != today:
                 payload, err = load_predictions()
                 if not err:
@@ -673,7 +675,7 @@ def monev_worker(client, env):
     capture sesi & bangun laporan monev otomatis harian setelah MONEV_TIME (WIB),
     lalu auto-commit + push ke origin.
 
-    Catatan: server berjalan di UTC, jadi jadwal dihitung dari WIB (UTC+7).
+    Semua jadwal dihitung dari WIB (Asia/Jakarta, UTC+7) via waktu.now_wib().
     """
     monev_time = (env.get("MONEV_TIME", "16:10") or "").strip()
     auto_push = (env.get("MONEV_AUTO_PUSH", "1") or "1").strip().lower() \
@@ -687,7 +689,7 @@ def monev_worker(client, env):
     time.sleep(15)  # beri waktu bot selesai start
     while True:
         try:
-            now_wib = datetime.now(timezone.utc) + timedelta(hours=7)
+            skrg = now_wib()
             # verifikasi rekam jejak tiap 10 menit (dulu hanya jalan di mode webhook)
             if time.time() - last_verify >= 600:
                 last_verify = time.time()
@@ -698,8 +700,8 @@ def monev_worker(client, env):
                 except Exception as e:
                     log(f"⚠️ Verifikasi berkala gagal: {e}")
             # monev harian setelah jam yg ditentukan (WIB)
-            today = now_wib.strftime("%Y-%m-%d")
-            if monev_time and now_wib.strftime("%H:%M") >= monev_time \
+            today = skrg.strftime("%Y-%m-%d")
+            if monev_time and skrg.strftime("%H:%M") >= monev_time \
                     and last_monev != today:
                 last_monev = today
                 log("Monev harian: capture sesi 1 & 2 + bangun laporan...")
@@ -847,7 +849,7 @@ def check_freshness(payload):
     """Warnai kalau data prediksi sudah lama."""
     try:
         t = datetime.strptime(payload["tanggal_prediksi"], "%Y-%m-%d")
-        if t.date() < datetime.now().date() - timedelta(days=2):
+        if t.date() < today_wib() - timedelta(days=2):
             return (f"\n\n⚠️ *Data prediksi mungkin sudah usang* "
                     f"(untuk {payload.get('tanggal_prediksi')}). "
                     f"Jalankan `python predict_daily.py --refresh` lalu restart bot.")
@@ -1207,7 +1209,7 @@ def data_is_current(payload, max_gap_days=3):
         d = datetime.strptime(dstr, "%Y-%m-%d").date()
     except (ValueError, TypeError):
         return False, None
-    gap = (datetime.now().date() - d).days
+    gap = (today_wib() - d).days
     return gap <= max_gap_days, d
 
 
@@ -1244,7 +1246,7 @@ def handle_refresh(client, jid, payload, force=False):
             # simpan log lengkap utk diagnosa (bot hanya kirim baris terakhir)
             try:
                 with open(os.path.join(BASE, "data", "predict_daily.log"), "a") as f:
-                    f.write(f"\n===== {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} =====\n"
+                    f.write(f"\n===== {now_wib().strftime('%Y-%m-%d %H:%M:%S')} =====\n"
                             f"{(proc.stdout or '') + (proc.stderr or '')}\n")
             except Exception:
                 pass

@@ -2,6 +2,22 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.12.1] — 2026-09-13
+### Changed
+- **Seluruh sistem memakai WIB (Asia/Jakarta).** Timezone server diubah dari
+  `Etc/UTC` → `Asia/Jakarta`; crontab & laporan otomatis kini berjalan sesuai
+  jam WIB (sebelumnya `WATCH_REPORT_TIME=18:00` efektif terkirim ~01:00 WIB).
+- **Modul baru `waktu.py`** — satu sumber kebenaran waktu (`now_wib`,
+  `today_wib`, `WIB`). Semua script (`wa_bot`, `predict_daily`,
+  `get_history_id`, `add_macro`, `get_stocks_id`, `session_data`,
+  `eval_report`) memakai modul ini, jadi perilaku tidak lagi bergantung pada
+  timezone server (aman kalau VPS baru masih UTC).
+- Normalisasi tanggal dari Yahoo (daily & intraday) kini eksplisit WIB.
+
+### Fixed
+- **`report_worker` (laporan watchlist & rekap pasar) meleset 7 jam** — dulu
+  memakai waktu lokal server yang UTC. Sekarang berbasis WIB.
+
 ## [v0.12.0] — 2026-09-13
 ### Added
 - **Perintah `monev`** (alias `evaluasi`) — laporan hasil prediksi vs AKTUAL,

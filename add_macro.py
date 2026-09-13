@@ -24,6 +24,8 @@ import numpy as np
 import pandas as pd
 import requests
 
+from waktu import WIB
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_IN = os.path.join(BASE, "data", "features.db")
 DB_OUT = os.path.join(BASE, "data", "features_macro.db")
@@ -66,7 +68,7 @@ def fetch_close(s, crumb, symbol, years=5):
     ts = res["timestamp"]
     close = res["indicators"]["quote"][0]["close"]
     df = pd.DataFrame({
-        "tanggal": [datetime.fromtimestamp(x).date() for x in ts],
+        "tanggal": [datetime.fromtimestamp(x, WIB).date() for x in ts],
         "close": close,
     }).dropna()
     df["tanggal"] = pd.to_datetime(df["tanggal"])

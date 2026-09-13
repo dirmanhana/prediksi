@@ -15,10 +15,11 @@ Cara pakai:
 
 import json
 import time
-from datetime import datetime
 
 import pandas as pd
 import requests
+
+from waktu import now_wib
 
 # Kolom yang diambil dari TradingView
 COLUMNS = [
@@ -106,7 +107,7 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values("name").reset_index(drop=True)
 
     df.insert(0, "no", range(1, len(df) + 1))
-    df["tanggal_data"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    df["tanggal_data"] = now_wib().strftime("%Y-%m-%d %H:%M:%S")
     return df
 
 

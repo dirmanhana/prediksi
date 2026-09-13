@@ -29,7 +29,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
@@ -37,6 +37,7 @@ import requests
 import xgboost as xgb
 
 from train_xgb import FEATURE_COLS, add_features  # reuse feature engineering
+from waktu import now_wib, today_wib
 BASE = os.path.dirname(os.path.abspath(__file__))
 HIST_DIR = os.path.join(BASE, "data", "history")
 PQ_PATH = os.path.join(BASE, "data", "history_id_5y.parquet")
@@ -102,7 +103,10 @@ def fetch_range(s, crumb, symbol, t1, t2, is_macro=False):
             # tanggal dinormalisasi ke 00:00 (tanggal saja, konsisten antar
             # sumber & dgn CSV lama) — cegah TypeError dan mismatch merge
             return pd.DataFrame({
-                "tanggal": pd.to_datetime(ts, unit="s").normalize(),
+                "tanggal": (pd.to_datetime(ts, unit="s", utc=True)
+                              .tz_convert("Asia/Jakarta")
+                              .normalize()
+                              .tz_localize(None)),
                 "open": q.get("open"), "high": q.get("high"), "low": q.get("low"),
                 "close": q.get("close"), "volume": q.get("volume"),
                 "adj_close": adj if adj else q.get("close"),
@@ -558,7 +562,7 @@ def main():
         if os.path.exists(p):
             last = pd.read_csv(p, parse_dates=["tanggal"])["tanggal"].max()
             break
-    if last is not None and last.date() < datetime.now().date() - timedelta(days=4):
+    if last is not None and last.date() < today_wib() - timedelta(days=4):
         print(f"⚠  Data terakhir: {last.date()} (mungkin stale). "
               f"Gunakan --refresh untuk update.")
 
@@ -616,7 +620,7 @@ def main():
     # simpan model + metadata
     model.save_model(os.path.join(BASE, "data", "model_daily.ubj"))
     with open(OUT_MODEL, "w") as f:
-        json.dump({"feature_cols": cols, "trained_at": datetime.now().isoformat(),
+        json.dump({"feature_cols": cols, "trained_at": now_wib().isoformat(),
                    "valid_auc": round(valid_auc, 4)}, f, indent=2)
 
     # ---- arsip prediksi utk verifikasi harian (top-20 naik/turun LIKUID) ----
@@ -638,7 +642,7 @@ def main():
 
     # log riwayat
     log = pd.DataFrame([{
-        "tanggal_run": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "tanggal_run": now_wib().strftime("%Y-%m-%d %H:%M"),
         "data_sampai": out["tanggal"].max().strftime("%Y-%m-%d"),
         "n_saham": len(out), "valid_auc": round(valid_auc, 4),
         "threshold": round(best_t, 2),

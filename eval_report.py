@@ -29,11 +29,12 @@ import argparse
 import json
 import os
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 import pandas as pd
 
 import session_data as sd
+from waktu import WIB
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 ARCHIVE = os.path.join(BASE, "data", "prediction_archive.csv")
@@ -42,7 +43,6 @@ EVAL_DIR = os.path.join(BASE, "data", "eval")
 EVAL_CSV = os.path.join(EVAL_DIR, "prediction_eval.csv")
 SUMMARY_JSON = os.path.join(EVAL_DIR, "monev_summary.json")
 
-WIB = timezone(timedelta(hours=7))
 DEFAULT_CAPTURE_DAYS = 55
 
 EVAL_COLS = [
