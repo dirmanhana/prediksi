@@ -11,6 +11,11 @@ Semua perubahan penting pada proyek XGBoost IDX.
 - Hanya `data/reports/pratinjau.png` yang tetap di-`.gitignore` (file pratinjau
   lokal, bukan bagian laporan).
 
+### Fixed
+- **Monev harian dijalankan ulang setiap restart bot** (termasuk mengirim PDF
+  lagi ke admin). Tanggal terakhir monev kini disimpan di
+  `data/report_state.json` (`last_monev`), sama seperti laporan watchlist/rekap.
+
 ## [v0.13.0] — 2026-09-13
 ### Added
 - **Laporan PDF `DATA BOT TRADING`** dari perintah `monev` (mirip spreadsheet

@@ -749,8 +749,8 @@ def monev_worker(client, env):
         cap_days = int(env.get("MONEV_DAYS", "55"))
     except (TypeError, ValueError):
         cap_days = 55
-    last_monev = ""
     last_verify = 0.0
+    state = _load_report_state()
     time.sleep(15)  # beri waktu bot selesai start
     while True:
         try:
@@ -767,12 +767,14 @@ def monev_worker(client, env):
             # monev harian setelah jam yg ditentukan (WIB)
             today = skrg.strftime("%Y-%m-%d")
             if monev_time and skrg.strftime("%H:%M") >= monev_time \
-                    and last_monev != today:
+                    and state.get("last_monev") != today:
                 log("Monev harian: capture sesi 1 & 2 + bangun laporan...")
                 try:
                     import eval_report as _er
                     r = _er.run_daily(days=cap_days, auto_push=auto_push)
-                    last_monev = today  # sukses -> jangan ulang hari ini
+                    # catat tanggal agar restart bot TIDAK menjalankan/mengirim ulang
+                    state["last_monev"] = today
+                    _save_report_state(state)
                     log(f"Monev selesai: {r['capture_ok']}/{r['capture_tickers']} saham, "
                         f"{r['eval_rows']} baris eval, push={r['push']}")
                     if r["push"] == "pushed":
