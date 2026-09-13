@@ -271,7 +271,7 @@ def save_summary(days=7):
 
 
 # ---------------------------------------------------------------- git
-def git_autocommit_push(message, paths=("data/eval",), timeout=120):
+def git_autocommit_push(message, paths=("data/eval", "data/reports"), timeout=120):
     """Commit + push hasil evaluasi ke origin. Return status string."""
     def run(args):
         return subprocess.run(["git", "-C", BASE, *args],
@@ -293,7 +293,7 @@ def git_autocommit_push(message, paths=("data/eval",), timeout=120):
 def run_daily(days=DEFAULT_CAPTURE_DAYS, auto_push=True, verbose=True):
     """Rutin harian: capture sesi (incremental) -> build eval -> simpan -> push."""
     result = {"capture_tickers": 0, "capture_ok": 0, "capture_fail": 0,
-              "bars": 0, "eval_rows": 0, "push": "off"}
+              "bars": 0, "eval_rows": 0, "pdf": None, "push": "off"}
     arch = None
     if os.path.exists(ARCHIVE):
         arch = pd.read_csv(ARCHIVE, dtype={"ticker": str})
@@ -308,6 +308,13 @@ def run_daily(days=DEFAULT_CAPTURE_DAYS, auto_push=True, verbose=True):
     df = build(save=True)
     result["eval_rows"] = int(len(df))
     save_summary(days=min(int(days), 7))
+    # PDF "DATA BOT TRADING" dibuat SEBELUM push supaya ikut ter-commit
+    try:
+        import report_pdf as _rp
+        result["pdf"] = _rp.build_pdf(days=14)
+    except Exception as e:
+        if verbose:
+            print(f"⚠️ Gagal bikin PDF: {type(e).__name__}: {e}")
     if auto_push and len(df):
         msg = ("monev: evaluasi prediksi vs aktual s/d "
                f"{datetime.now(WIB).strftime('%Y-%m-%d')}")

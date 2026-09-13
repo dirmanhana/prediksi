@@ -2,6 +2,15 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.13.1] — 2026-09-13
+### Changed
+- **PDF `DATA BOT TRADING` kini diarsipkan ke git.** `data/reports/*.pdf` ikut
+  di-commit & push (sebelumnya di-`.gitignore`). `run_daily()` membuat PDF
+  **sebelum** auto-push supaya ikut terkirim; `monev_worker` memakai PDF yang
+  sama utk dikirim ke admin (tidak digenerate dua kali).
+- Hanya `data/reports/pratinjau.png` yang tetap di-`.gitignore` (file pratinjau
+  lokal, bukan bagian laporan).
+
 ## [v0.13.0] — 2026-09-13
 ### Added
 - **Laporan PDF `DATA BOT TRADING`** dari perintah `monev` (mirip spreadsheet

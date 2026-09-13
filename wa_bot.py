@@ -38,7 +38,7 @@ import requests
 
 from waktu import now_wib, today_wib
 
-VERSION = "v0.13.0"
+VERSION = "v0.13.1"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
@@ -781,22 +781,21 @@ def monev_worker(client, env):
                             f"Prediksi dievaluasi: {r['eval_rows']} baris "
                             f"({r['capture_ok']} saham di-capture).")
                     # kirim PDF "DATA BOT TRADING" ke semua admin
-                    try:
-                        import report_pdf as _rp
-                        pdf = _rp.build_pdf(days=14)
-                        if pdf:
-                            for admin in load_admins(env):
-                                try:
-                                    client.send_file(
-                                        f"{admin}@s.whatsapp.net", pdf,
-                                        caption="📄 *DATA BOT TRADING* — top 10 BOT naik, "
-                                                "sesi 1 & 2 (2 minggu terakhir).")
-                                    log(f"PDF monev terkirim ke admin {admin} "
-                                        f"({os.path.basename(pdf)})")
-                                except Exception as e:
-                                    log(f"⚠️ Kirim PDF ke admin {admin} gagal: {e}")
-                    except Exception as e:
-                        log(f"⚠️ Generator PDF gagal: {type(e).__name__}: {e}")
+                    # (PDF sudah dibuat oleh run_daily & ikut ter-commit)
+                    pdf = r.get("pdf")
+                    if pdf:
+                        for admin in load_admins(env):
+                            try:
+                                client.send_file(
+                                    f"{admin}@s.whatsapp.net", pdf,
+                                    caption="📄 *DATA BOT TRADING* — top 10 BOT naik, "
+                                            "sesi 1 & 2 (2 minggu terakhir).")
+                                log(f"PDF monev terkirim ke admin {admin} "
+                                    f"({os.path.basename(pdf)})")
+                            except Exception as e:
+                                log(f"⚠️ Kirim PDF ke admin {admin} gagal: {e}")
+                    else:
+                        log("⚠️ PDF monev tidak tersedia (generator gagal)")
                 except Exception as e:
                     log(f"⚠️ Monev harian gagal (akan dicoba lagi): "
                         f"{type(e).__name__}: {e}")

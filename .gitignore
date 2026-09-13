@@ -62,5 +62,5 @@ data/backups/
 # State runtime laporan otomatis (tanggal terakhir kirim watchlist/rekap)
 data/report_state.json
 
-# Laporan PDF (dibuat ulang tiap monev, tidak perlu di-commit)
-data/reports/
+# Pratinjau PNG (hanya utk inspeksi lokal; PDF-nya yang diarsipkan ke git)
+data/reports/pratinjau.png
