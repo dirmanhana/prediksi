@@ -2,6 +2,10 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.14.2] — 2026-09-13
+### Changed
+- Footer jawaban AI: `Dijawab AI` → **`Dijawab bot-drm`**.
+
 ## [v0.14.1] — 2026-09-13
 ### Changed
 - **Footer jawaban AI tidak lagi menampilkan nama model** — jadi cukup
