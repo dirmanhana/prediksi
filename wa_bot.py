@@ -38,7 +38,7 @@ import requests
 
 from waktu import now_wib, today_wib
 
-VERSION = "v0.14.2"
+VERSION = "v0.15.0"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
@@ -943,12 +943,31 @@ def check_freshness(payload):
 
 
 # ---------------------------------------------------------------- handler
+def _redact_msg(content):
+    """Sembunyikan API key di log (khusus perintah `ai set key ...`)."""
+    return re.sub(
+        r"(?i)^(\s*(?:ai|chatbot)\s+(?:set|ganti|ubah)\s+(?:key|apikey|api_key)\s+).*$",
+        r"\1<REDACTED>", content or "")
+
+
 def parse_command(content):
     """Parse perintah -> (cmd, arg). cmd: top|cek|help, atau None kalau bukan perintah.
     Didukung: prediksi / top 20 / top N / prediksi top N / cek KODE / prediksi KODE / help."""
     low = (content or "").strip().lower()
     if not low:
         return None
+    # admin: konfigurasi AI — NILAI (url/key/model) harus case-sensitive,
+    # jadi diambil dari konten ASLI, bukan versi lowercase.
+    m = re.match(r"^\s*(?:ai|chatbot)\s+(?:set|ganti|ubah)\s+([A-Za-z_]+)\s+(.+)$",
+                 (content or "").strip(), re.IGNORECASE)
+    if m:
+        return ("ai_set", (m.group(1).lower(), m.group(2).strip()))
+    if low in ("ai config", "ai setting", "ai pengaturan", "ai show", "ai info"):
+        return ("ai_config", None)
+    if low in ("ai reset", "ai default", "reset ai"):
+        return ("ai_reset", None)
+    if low in ("ai test", "ai tes", "tes ai", "test ai"):
+        return ("ai_test", None)
     # daftar penuh
     if low in ("prediksi", "prediksi harian", "prediksi hari ini",
                "rekomendasi", "rekomendasi harian", "saham", "list",
@@ -1051,6 +1070,11 @@ HELP_TEXT = (
     "• `versi` — info versi bot & model\n"
     "• `help` — menu ini\n\n"
     "👑 *Perintah admin* (hanya nomor admin):\n"
+    # Perintah admin kelola AI (base URL / API key / model)
+    "• `ai config` — lihat konfigurasi AI (base URL, key ter-mask, model)\n"
+    "• `ai set base <url>` / `ai set key <apikey>` / `ai set model <nama>`\n"
+    "• `ai set fallback <nama>` — model cadangan\n"
+    "• `ai test` — cek koneksi & model · `ai reset` — kembali ke `.env`\n"
     "• `tambah user 628xxxx` / `hapus user 628xxxx` / `user` (daftar user & jenisnya)\n\n"
     "🔔 Laporan watchlist otomatis dikirim tiap hari (lihat WATCH_REPORT_TIME di .env).\n"
     "🔒 Saham illikuid/penny dikeluarkan otomatis dari daftar.\n"
@@ -1415,9 +1439,12 @@ class MessageProcessor:
             pass
         self.seen.add(mid)
         content = (m.get("content") or "").strip()
-        log(f"Pesan baru dari {sender}: {content[:60]!r}")
+        log(f"Pesan baru dari {sender}: {_redact_msg(content)[:60]!r}")
         target = jid or f"{sender}@s.whatsapp.net"
         cmd = parse_command(content)
+        if cmd and cmd[0] in ("ai_set", "ai_config", "ai_reset", "ai_test"):
+            handle_ai_admin(self.client, self.ai, self.env, target, cmd)
+            return True
         if cmd and cmd[0] == "chat":
             handle_chat_command(self.client, self.ai, target, cmd[1])
             return True
@@ -1445,6 +1472,68 @@ class MessageProcessor:
         if reply:
             self.client.send_message(target, reply)
             log(f"-> {target}: jawaban AI terkirim ({len(reply)} char)")
+
+
+def handle_ai_admin(client, ai, env, jid, cmd):
+    """Kelola konfigurasi AI (base URL / API key / model) — HANYA admin.
+
+    Override disimpan di data/ai_config.json dan langsung dipakai (reload),
+    jadi admin tidak perlu edit .env atau restart bot.
+    """
+    sender = (jid or "").split("@")[0]
+    if sender not in load_admins(env):
+        client.send_message(jid, "⛔ Akses ditolak — hanya admin yang bisa "
+                                 "mengubah konfigurasi AI.")
+        log(f"-> {sender}: coba akses konfigurasi AI DITOLAK")
+        return
+    if ai is None:
+        client.send_message(jid, "⚠️ Modul AI tidak tersedia di bot ini.")
+        return
+    kind, arg = cmd
+    if kind == "ai_config":
+        c = ai.config_summary()
+        client.send_message(jid,
+            "⚙️ *KONFIGURASI AI*\n"
+            f"• Base URL : {c['base_url']}\n"
+            f"• API key  : {c['api_key']}\n"
+            f"• Model    : {c['model']}\n"
+            f"• Fallback : {c['fallback']}\n"
+            f"• Sumber   : {c['sumber']}\n"
+            f"• Status   : {'aktif ✅' if c['aktif'] else 'nonaktif ⛔'}\n\n"
+            "*Ubah (khusus admin):*\n"
+            "`ai set base <url>`\n"
+            "`ai set key <apikey>`\n"
+            "`ai set model <nama>`\n"
+            "`ai set fallback <nama>`\n"
+            "`ai test` — cek koneksi · `ai reset` — kembali ke .env")
+        log(f"Admin {sender} lihat konfigurasi AI")
+    elif kind == "ai_set":
+        field, value = arg
+        ok, info = ai.set_config(field, value)
+        if not ok:
+            client.send_message(jid, f"⚠️ Gagal: {info}")
+            log(f"Admin {sender} gagal set AI {field}: {info}")
+            return
+        c = ai.config_summary()
+        client.send_message(jid,
+            f"✅ *{info}* diperbarui.\n"
+            f"• Base URL : {c['base_url']}\n"
+            f"• API key  : {c['api_key']}\n"
+            f"• Model    : {c['model']}\n"
+            f"• Fallback : {c['fallback']}\n\n"
+            "Ketik `ai test` untuk memastikan koneksi.")
+        log(f"Admin {sender} set AI {info}")  # nilainya sengaja tidak dicatat
+    elif kind == "ai_reset":
+        ok, err = ai.reset_config()
+        if ok:
+            client.send_message(jid, "♻️ Konfigurasi AI dikembalikan ke nilai `.env`.")
+            log(f"Admin {sender} reset konfigurasi AI")
+        else:
+            client.send_message(jid, f"⚠️ Gagal reset: {err}")
+    elif kind == "ai_test":
+        ok, msg = ai.test()
+        client.send_message(jid, ("✅ " if ok else "⚠️ ") + f"Tes AI: {msg}")
+        log(f"Admin {sender} tes AI -> {msg[:100]}")
 
 
 def handle_chat_command(client, ai, jid, action):

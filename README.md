@@ -68,6 +68,10 @@ boleh chat ke bot **langsung dari WhatsApp**, tanpa edit file/restart:
 | `tambah user 6281234567890` | Izinkan nomor baru (langsung aktif) |
 | `hapus user 6281234567890` | Cabut izin (nomor admin tak bisa dihapus) |
 | `daftar user` | Lihat semua nomor yang diizinkan |
+| `ai config` | Lihat konfigurasi AI (base URL, API key ter-mask, model) |
+| `ai set base <url>` / `ai set key <apikey>` | Ganti base URL / API key AI (langsung aktif) |
+| `ai set model <nama>` / `ai set fallback <nama>` | Ganti model utama / cadangan |
+| `ai test` / `ai reset` | Cek koneksi & model / kembalikan ke nilai `.env` |
 
 Nomor non-admin yang mencoba perintah ini ditolak (⛔).
 

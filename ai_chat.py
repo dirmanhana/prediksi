@@ -19,6 +19,7 @@ State per user: data/ai_chat_state.json
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -28,6 +29,7 @@ from waktu import now_wib
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(BASE, "data", "ai_chat_state.json")
+RUNTIME_FILE = os.path.join(BASE, "data", "ai_config.json")
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
 EVAL_CSV = os.path.join(BASE, "data", "eval", "prediction_eval.csv")
 MONEV_JSON = os.path.join(BASE, "data", "eval", "monev_summary.json")
@@ -260,17 +262,116 @@ _TOOL_MAP = {
 
 # ---------------------------------------------------------------- AI chat
 class AIChat:
-    """Mode chat AI per user + pemanggilan tool data lokal."""
+    """Mode chat AI per user + pemanggilan tool data lokal.
+
+    Konfigurasi (base URL / API key / model / fallback) bisa di-override admin
+    lewat WhatsApp -> disimpan di data/ai_config.json (runtime, menang atas .env).
+    """
 
     def __init__(self, env, logger=None):
-        self.base_url = (env.get("AGNES_BASE_URL") or DEFAULT_BASE).rstrip("/")
-        self.api_key = (env.get("AGNES_API_KEY") or "").strip()
-        self.model = (env.get("AGNES_MODEL") or "agnes-3.0-flash").strip()
-        self.fallback = (env.get("AGNES_MODEL_FALLBACK") or "agnes-2.5-flash").strip()
+        self.runtime_path = RUNTIME_FILE
+        self._env_defaults = {
+            "base_url": (env.get("AGNES_BASE_URL") or DEFAULT_BASE).rstrip("/"),
+            "api_key": (env.get("AGNES_API_KEY") or "").strip(),
+            "model": (env.get("AGNES_MODEL") or "agnes-3.0-flash").strip(),
+            "fallback": (env.get("AGNES_MODEL_FALLBACK") or "agnes-2.5-flash").strip(),
+        }
         self.window_min = float(env.get("AI_CHAT_WINDOW") or 5)
         self.max_min = float(env.get("AI_CHAT_MAX") or 30)
         self.max_msg_day = int(env.get("AI_CHAT_MAX_MSG_DAY") or 40)
         self.logger = logger or (lambda m: None)
+        self.reload()
+
+    # -- konfigurasi runtime ----------------------------------------
+    def reload(self):
+        """Terapkan .env + override dari data/ai_config.json."""
+        cfg = dict(self._env_defaults)
+        rt = _read_json(self.runtime_path, {}) or {}
+        for k in ("base_url", "api_key", "model", "fallback"):
+            v = rt.get(k)
+            if isinstance(v, str) and v.strip():
+                cfg[k] = v.strip()
+        cfg["base_url"] = (cfg.get("base_url") or DEFAULT_BASE).rstrip("/")
+        self.base_url = cfg["base_url"]
+        self.api_key = cfg["api_key"]
+        self.model = cfg["model"] or "agnes-3.0-flash"
+        self.fallback = cfg["fallback"] or "agnes-2.5-flash"
+        return cfg
+
+    _FIELD_ALIAS = {"base": "base_url", "url": "base_url", "base_url": "base_url",
+                    "key": "api_key", "apikey": "api_key", "api_key": "api_key",
+                    "model": "model", "fallback": "fallback"}
+
+    def set_config(self, field, value):
+        """Simpan override; return (ok, pesan)."""
+        key = self._FIELD_ALIAS.get((field or "").lower().strip())
+        if not key:
+            return False, f"field tidak dikenal: {field}"
+        value = (value or "").strip()
+        if not value:
+            return False, "nilai tidak boleh kosong"
+        if key == "base_url" and not re.match(r"^https?://", value):
+            return False, "base URL harus diawali http:// atau https://"
+        rt = _read_json(self.runtime_path, {}) or {}
+        rt[key] = value
+        try:
+            os.makedirs(os.path.dirname(self.runtime_path), exist_ok=True)
+            tmp = self.runtime_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(rt, f, indent=1)
+            os.replace(tmp, self.runtime_path)
+        except OSError as e:
+            return False, f"gagal menyimpan: {e}"
+        self.reload()
+        return True, key
+
+    def reset_config(self):
+        """Hapus override -> kembali ke nilai .env."""
+        try:
+            if os.path.exists(self.runtime_path):
+                os.remove(self.runtime_path)
+        except OSError as e:
+            return False, str(e)
+        self.reload()
+        return True, None
+
+    @staticmethod
+    def _mask(key):
+        if not key:
+            return "(kosong)"
+        return (key[:6] + "..." + key[-4:]) if len(key) > 12 else "***"
+
+    def config_summary(self):
+        return {
+            "base_url": self.base_url,
+            "api_key": self._mask(self.api_key),
+            "model": self.model,
+            "fallback": self.fallback,
+            "sumber": "runtime (ai_config.json)" if os.path.exists(self.runtime_path) else ".env",
+            "aktif": self.enabled(),
+        }
+
+    def test(self):
+        """Cek koneksi + apakah model terdaftar. Return (ok, pesan)."""
+        if not self.enabled():
+            return False, "API key kosong"
+        try:
+            r = requests.get(f"{self.base_url}/models",
+                             headers={"Authorization": f"Bearer {self.api_key}"},
+                             timeout=30)
+        except requests.RequestException as e:
+            return False, f"{type(e).__name__}: {e}"
+        if r.status_code != 200:
+            return False, f"HTTP {r.status_code}: {r.text[:140]}"
+        try:
+            ids = [m.get("id") for m in (r.json().get("data") or [])]
+        except ValueError:
+            return False, "respons bukan JSON"
+        if self.model in ids:
+            extra = f"model '{self.model}' tersedia"
+        else:
+            extra = f"⚠️ model '{self.model}' TIDAK ada di daftar"
+        return True, f"tersambung, {len(ids)} model. {extra}"
 
     def enabled(self):
         return bool(self.api_key)

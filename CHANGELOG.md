@@ -2,6 +2,17 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.15.0] — 2026-09-13
+### Added
+- **Admin bisa ganti konfigurasi AI langsung dari WhatsApp** (tanpa edit `.env`
+  atau restart bot): `ai config`, `ai set base <url>`, `ai set key <apikey>`,
+  `ai set model <nama>`, `ai set fallback <nama>`, `ai test`, `ai reset`.
+  Override disimpan di `data/ai_config.json` (menang atas `.env`) dan langsung
+  dipakai saat itu juga.
+- API key **di-mask** saat ditampilkan dan **tidak pernah dicatat di log**
+  (pesan `ai set key ...` otomatis diredaksi).
+- Hanya nomor admin (`BOT_ADMINS`) yang bisa memakai perintah ini.
+
 ## [v0.14.2] — 2026-09-13
 ### Changed
 - Footer jawaban AI: `Dijawab AI` → **`Dijawab bot-drm`**.
