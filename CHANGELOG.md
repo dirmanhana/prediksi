@@ -2,6 +2,31 @@
 
 Semua perubahan penting pada proyek XGBoost IDX.
 
+## [v0.12.2] — 2026-09-13
+### Fixed
+- **Laporan watchlist/rekap terkirim ulang setiap restart bot** setelah jam
+  laporan. Dulu `last_watch`/`last_recap` hanya di memori (reset saat start),
+  jadi restart sore/malam mengirim laporan lagi. Sekarang tanggal terakhir
+  kirim disimpan ke `data/report_state.json`.
+- **Capture sesi mengulang ticker yang tidak mungkin ada datanya.** Arsip
+  memuat tanggal non-bursa (mis. `2026-08-29` = Sabtu) dan beberapa ticker
+  tanpa bar 15m. `tickers_needing_capture()` kini menyaring pasangan lewat data
+  harian (parquet) -> hanya hari bursa yang benar-benar ditransaksikan yang
+  di-fetch, tidak diulang terus tiap hari.
+- **Monev bisa dievaluasi sebelum data harian siap.** `MONEV_TIME` default
+  dipindah ke **18:30 WIB** (setelah cron `predict_daily` 17:30 WIB) supaya
+  close harian hari itu sudah ada. Kalau proses gagal, `monev_worker` akan
+  mencoba lagi (dulu langsung ditandai selesai).
+
+### Added
+- **Backup harian `data/session_bars.csv`** ke `data/backups/` (rotasi 14 file
+  terakhir). Data sesi tidak di-commit & tidak bisa diregenerate setelah
+  jendela 60 hari Yahoo, jadi perlu backup terpisah. Lokasi bisa diubah via
+  env `SESSION_BACKUP_DIR`.
+
+### Changed
+- Jadwal monev harian: `MONEV_TIME=18:30` WIB (dulu 16:10).
+
 ## [v0.12.1] — 2026-09-13
 ### Changed
 - **Seluruh sistem memakai WIB (Asia/Jakarta).** Timezone server diubah dari

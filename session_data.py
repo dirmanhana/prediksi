@@ -20,6 +20,7 @@ Output: data/session_bars.csv
 """
 
 import os
+import shutil
 import time
 from datetime import datetime, timezone
 
@@ -30,8 +31,13 @@ from waktu import WIB
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 SESSION_CSV = os.path.join(BASE, "data", "session_bars.csv")
+PARQUET = os.path.join(BASE, "data", "history_id_5y.parquet")
 MAX_DAYS = 59          # batas keras Yahoo utk interval 15m ("within the last 60 days")
 DEFAULT_DAYS = 55
+BACKUP_DIR = os.environ.get("SESSION_BACKUP_DIR",
+                            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "data", "backups"))
+BACKUP_KEEP = 14       # jumlah file backup harian yang disimpan
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"}
@@ -190,12 +196,31 @@ def merge_sessions(new_df):
 
 
 # ---------------------------------------------------------------- kebutuhan
+def _traded_pairs():
+    """Set (ticker, tanggal) yang BENAR-BENAR ada di data harian = hari bursa.
+
+    Dipakai utk menyaring `tickers_needing_capture`: pasangan yang tidak ada di
+    data harian (akhir pekan, libur bursa, saham suspend, atau tanggal arsip
+    yang salah) tidak akan pernah punya bar sesi -> jangan di-fetch berulang.
+    Return None bila parquet tidak tersedia (fallback: tanpa filter).
+    """
+    if not os.path.exists(PARQUET):
+        return None
+    try:
+        d = pd.read_parquet(PARQUET, columns=["ticker", "tanggal"])
+    except Exception:
+        return None
+    d["tanggal"] = pd.to_datetime(d["tanggal"]).dt.normalize()
+    return set(zip(d["ticker"].astype(str), d["tanggal"]))
+
+
 def tickers_needing_capture(archive, sessions=None, max_age_days=DEFAULT_DAYS, now=None):
     """Daftar ticker yang prediksinya BELUM punya sesi 1 & 2 lengkap.
 
     `archive` = DataFrame prediction_archive.csv (kolom ticker, tanggal_prediksi).
     Hanya tanggal_prediksi dalam jendela `max_age_days` yang dihitung (di luar
-    itu memang sudah tidak bisa diambil lagi dari Yahoo).
+    itu memang sudah tidak bisa diambil lagi dari Yahoo). Pasangan yang bukan
+    hari bursa (tidak ada di data harian) dilewati.
     """
     if archive is None or len(archive) == 0:
         return []
@@ -217,9 +242,13 @@ def tickers_needing_capture(archive, sessions=None, max_age_days=DEFAULT_DAYS, n
         g = s.groupby(["ticker", "tanggal"])["sesi"].nunique()
         have = set(g[g >= 2].index)
 
+    traded = _traded_pairs()
     need = set()
     for tk, tgl in zip(a["ticker"].astype(str), a["tanggal_prediksi"]):
-        if (tk, pd.Timestamp(tgl)) not in have:
+        key = (tk, pd.Timestamp(tgl))
+        if traded is not None and key not in traded:
+            continue  # bukan hari bursa utk saham ini -> tak ada sesi
+        if key not in have:
             need.add(tk)
     return sorted(need)
 
@@ -251,3 +280,35 @@ def capture(tickers, days=DEFAULT_DAYS, pause=0.35, verbose=True):
     new = pd.concat(frames, ignore_index=True)
     merge_sessions(new)
     return len(new), n_ok, n_fail
+
+
+# ---------------------------------------------------------------- backup
+def backup_sessions(keep=BACKUP_KEEP, verbose=True):
+    """Salin session_bars.csv ke backup harian (rotasi `keep` file terakhir).
+
+    File ini tidak di-commit ke git dan tidak bisa diregenerate setelah keluar
+    jendela 60 hari Yahoo, jadi perlu backup terpisah.
+    Lokasi bisa diubah via env SESSION_BACKUP_DIR.
+    """
+    if not os.path.exists(SESSION_CSV):
+        return None
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        stamp = datetime.now(WIB).strftime("%Y%m%d")
+        dst = os.path.join(BACKUP_DIR, f"session_bars_{stamp}.csv")
+        if not os.path.exists(dst):
+            shutil.copy2(SESSION_CSV, dst)
+        files = sorted(f for f in os.listdir(BACKUP_DIR)
+                       if f.startswith("session_bars_") and f.endswith(".csv"))
+        for old in files[:-keep] if keep > 0 else []:
+            try:
+                os.remove(os.path.join(BACKUP_DIR, old))
+            except OSError:
+                pass
+        if verbose:
+            print(f"Backup sesi -> {dst} ({min(len(files), keep) if keep > 0 else len(files)} file disimpan)")
+        return dst
+    except OSError as e:
+        if verbose:
+            print(f"⚠️ Backup sesi gagal: {e}")
+        return None

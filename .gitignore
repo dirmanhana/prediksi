@@ -55,5 +55,9 @@ data/last_features.parquet
 
 # Data sesi (Yahoo 15m) — disimpan lokal, TIDAK di-commit.
 # Yahoo hanya menyediakan ~60 hari terakhir, jadi file ini tidak bisa
-# diregenerate setelah lewat jendela tsb (backup terpisah disarankan).
+# diregenerate setelah lewat jendela tsb -> di-backup harian ke data/backups/.
 data/session_bars.csv
+data/backups/
+
+# State runtime laporan otomatis (tanggal terakhir kirim watchlist/rekap)
+data/report_state.json

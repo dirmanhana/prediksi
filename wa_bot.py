@@ -38,7 +38,7 @@ import requests
 
 from waktu import now_wib, today_wib
 
-VERSION = "v0.12.1"
+VERSION = "v0.12.2"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PRED_FILE = os.path.join(BASE, "data", "predictions_tomorrow.json")
@@ -46,6 +46,7 @@ MODEL_UBJ = os.path.join(BASE, "data", "model_daily.ubj")
 MODEL_JSON = os.path.join(BASE, "data", "model_daily.json")
 LAST_FEATURES = os.path.join(BASE, "data", "last_features.parquet")
 STATE_FILE = os.path.join(BASE, "data", "wa_bot_state.json")
+REPORT_STATE_FILE = os.path.join(BASE, "data", "report_state.json")
 LOG_FILE = os.path.join(BASE, "data", "wa_bot.log")
 ENV_FILE = os.path.join(BASE, ".env")
 
@@ -627,17 +628,42 @@ def format_watch_report(payload, number):
     return "\n".join(lines), None
 
 
+def _load_report_state():
+    """Baca tanggal terakhir laporan watchlist/rekap dikirim (anti dobel)."""
+    try:
+        with open(REPORT_STATE_FILE) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_report_state(state):
+    try:
+        tmp = REPORT_STATE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp, REPORT_STATE_FILE)
+    except OSError as e:
+        log(f"⚠️ Gagal simpan report_state: {e}")
+
+
 def report_worker(client, report_time, recap_time):
     """Thread: kirim laporan watchlist & rekap pasar otomatis harian.
     Setiap user menerima laporan watchlist-nya MASING-MASING; rekap pasar
-    dikirim ke SEMUA user diizinkan (daftar dibaca dinamis)."""
-    last_watch = ""
-    last_recap = ""
+    dikirim ke SEMUA user diizinkan (daftar dibaca dinamis).
+
+    Tanggal terakhir kirim DISIMPAN ke data/report_state.json supaya restart bot
+    setelah jam laporan tidak mengirim ulang (dulu hanya di memori -> tiap
+    restart sore/malam laporan terkirim lagi)."""
+    state = _load_report_state()
+    # migrasi dari versi lama (tanpa file state): jangan kirim ulang hari ini
+    # bila laporan memang sudah pernah terkirim sebelum fitur ini ada.
     while True:
         try:
-            now = now_wib().strftime("%H:%M")
-            today = now_wib().strftime("%Y-%m-%d")
-            if report_time and now >= report_time and last_watch != today:
+            sekarang = now_wib()
+            now = sekarang.strftime("%H:%M")
+            today = sekarang.strftime("%Y-%m-%d")
+            if report_time and now >= report_time and state.get("last_watch") != today:
                 payload, err = load_predictions()
                 if not err:
                     for num in load_allowed_numbers():
@@ -646,8 +672,9 @@ def report_worker(client, report_time, recap_time):
                             if text:
                                 client.send_message(f"{num}@s.whatsapp.net", text)
                                 log(f"Laporan watchlist ({report_time}) -> {num}")
-                last_watch = today
-            if recap_time and now >= recap_time and last_recap != today:
+                state["last_watch"] = today
+                _save_report_state(state)
+            if recap_time and now >= recap_time and state.get("last_recap") != today:
                 payload, err = load_predictions()
                 if not err:
                     text, _ = format_rekap(payload)
@@ -655,7 +682,8 @@ def report_worker(client, report_time, recap_time):
                         for num in load_allowed_numbers():
                             client.send_message(f"{num}@s.whatsapp.net", text)
                         log(f"Rekap pasar otomatis ({recap_time}) -> semua user")
-                last_recap = today
+                state["last_recap"] = today
+                _save_report_state(state)
         except Exception as e:
             log(f"⚠️ Laporan otomatis gagal: {e}")
         time.sleep(45)
@@ -677,7 +705,7 @@ def monev_worker(client, env):
 
     Semua jadwal dihitung dari WIB (Asia/Jakarta, UTC+7) via waktu.now_wib().
     """
-    monev_time = (env.get("MONEV_TIME", "16:10") or "").strip()
+    monev_time = (env.get("MONEV_TIME", "18:30") or "").strip()
     auto_push = (env.get("MONEV_AUTO_PUSH", "1") or "1").strip().lower() \
         not in ("0", "false", "no", "off", "")
     try:
@@ -703,11 +731,11 @@ def monev_worker(client, env):
             today = skrg.strftime("%Y-%m-%d")
             if monev_time and skrg.strftime("%H:%M") >= monev_time \
                     and last_monev != today:
-                last_monev = today
                 log("Monev harian: capture sesi 1 & 2 + bangun laporan...")
                 try:
                     import eval_report as _er
                     r = _er.run_daily(days=cap_days, auto_push=auto_push)
+                    last_monev = today  # sukses -> jangan ulang hari ini
                     log(f"Monev selesai: {r['capture_ok']}/{r['capture_tickers']} saham, "
                         f"{r['eval_rows']} baris eval, push={r['push']}")
                     if r["push"] == "pushed":
@@ -716,7 +744,8 @@ def monev_worker(client, env):
                             f"Prediksi dievaluasi: {r['eval_rows']} baris "
                             f"({r['capture_ok']} saham di-capture).")
                 except Exception as e:
-                    log(f"⚠️ Monev harian gagal: {type(e).__name__}: {e}")
+                    log(f"⚠️ Monev harian gagal (akan dicoba lagi): "
+                        f"{type(e).__name__}: {e}")
         except Exception as e:
             log(f"⚠️ monev worker error: {type(e).__name__}: {e}")
         time.sleep(60)
@@ -1486,7 +1515,7 @@ def main():
     # thread verifikasi berkala + monev harian (capture sesi 1 & 2, push ke origin)
     threading.Thread(target=monev_worker, args=(client, env), daemon=True).start()
     log(f"Monev harian: capture sesi + laporan otomatis tiap "
-        f"{env.get('MONEV_TIME', '16:10')} WIB | auto-push="
+        f"{env.get('MONEV_TIME', '18:30')} WIB | auto-push="
         f"{env.get('MONEV_AUTO_PUSH', '1')}")
 
     processor = MessageProcessor(client, env, seen, cutoff)

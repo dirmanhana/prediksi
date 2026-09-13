@@ -303,6 +303,8 @@ def run_daily(days=DEFAULT_CAPTURE_DAYS, auto_push=True, verbose=True):
             bars, ok, fail = sd.capture(todo, days=days, verbose=verbose)
             result.update(capture_tickers=len(todo), capture_ok=ok,
                           capture_fail=fail, bars=bars)
+    # backup harian data sesi (tidak di-commit, tidak bisa diregenerate >60 hari)
+    sd.backup_sessions(verbose=verbose)
     df = build(save=True)
     result["eval_rows"] = int(len(df))
     save_summary(days=min(int(days), 7))
