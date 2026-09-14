@@ -1151,6 +1151,56 @@ def handle_watch(client, cmd, jid):
         log(f"-> {jid}: watch del {removed}")
 
 
+def _monev_command_worker(client, jid, days, env):
+    """Jalankan perintah `monev` manual di thread terpisah.
+
+    PENTING: tarik dulu data sesi 1 & 2 terbaru (capture) sebelum membangun
+    laporan. Sebelumnya perintah manual hanya membaca data/session_bars.csv
+    apa adanya, sehingga bila diketik SEBELUM MONEV_TIME (auto-capture),
+    PDF tertinggal di hari bursa terakhir yang tercatat.
+    """
+    import time as _t
+    t0 = _t.time()
+    try:
+        import pandas as _pd
+        import eval_report as _er
+        import session_data as _sd
+        try:
+            cap_days = int(env.get("MONEV_DAYS", "55") or "55")
+        except (TypeError, ValueError):
+            cap_days = 55
+        arch = None
+        if os.path.exists(_er.ARCHIVE):
+            arch = _pd.read_csv(_er.ARCHIVE, dtype={"ticker": str})
+        if arch is not None and not arch.empty:
+            todo = _sd.tickers_needing_capture(arch, max_age_days=cap_days)
+            if todo:
+                client.send_message(jid, f"\u23f3 Menyiapkan data sesi terbaru "
+                                         f"({len(todo)} saham), mohon tunggu...")
+                _sd.capture(todo, days=cap_days, verbose=False)
+                _sd.backup_sessions(verbose=False)
+        df = _er.build(save=True)
+        _er.save_summary(days=days)
+        text = _er.summary_text(df, days=days)
+    except Exception as e:
+        text = f"⚠️ Gagal membangun monev: {type(e).__name__}: {e}"
+    text += "\n\n📄 Laporan *DATA BOT TRADING* (PDF) dikirim menyusul."
+    client.send_message(jid, text)
+    # kirim juga PDF "DATA BOT TRADING" (top-10 naik, sesi 1 & 2, 2 minggu)
+    try:
+        import report_pdf as _rp
+        pdf = _rp.build_pdf(days=14)
+        if pdf:
+            client.send_file(
+                jid, pdf,
+                caption="📄 *DATA BOT TRADING* — Top 10 BOT naik, sesi 1 & 2 "
+                        "(2 minggu terakhir). Return basis close hari sebelumnya.")
+            log(f"-> {jid}: monev PDF terkirim ({os.path.basename(pdf)})")
+    except Exception as e:
+        log(f"⚠️ Gagal kirim PDF monev: {type(e).__name__}: {e}")
+    log(f"-> {jid}: monev {days} hari ({_t.time()-t0:.1f}s)")
+
+
 def handle_command(client, msg, env):
     """Proses satu pesan masuk -> kirim balasan ke pengirim."""
     import time as _t
@@ -1237,28 +1287,9 @@ def handle_command(client, msg, env):
         log(f"-> {jid}: riwayat {cmd[1]} ({_t.time()-t0:.1f}s)")
 
     elif cmd[0] == "monev":
-        try:
-            import eval_report as _er
-            df = _er.build(save=True)
-            _er.save_summary(days=cmd[1])
-            text = _er.summary_text(df, days=cmd[1])
-        except Exception as e:
-            text = f"⚠️ Gagal membangun monev: {type(e).__name__}: {e}"
-        text += "\n\n📄 Laporan *DATA BOT TRADING* (PDF) dikirim menyusul."
-        client.send_message(jid, text)
-        # kirim juga PDF "DATA BOT TRADING" (top-10 naik, sesi 1 & 2, 2 minggu)
-        try:
-            import report_pdf as _rp
-            pdf = _rp.build_pdf(days=14)
-            if pdf:
-                client.send_file(
-                    jid, pdf,
-                    caption="📄 *DATA BOT TRADING* — Top 10 BOT naik, sesi 1 & 2 "
-                            "(2 minggu terakhir). Return basis close hari sebelumnya.")
-                log(f"-> {jid}: monev PDF terkirim ({os.path.basename(pdf)})")
-        except Exception as e:
-            log(f"⚠️ Gagal kirim PDF monev: {type(e).__name__}: {e}")
-        log(f"-> {jid}: monev {cmd[1]} hari ({_t.time()-t0:.1f}s)")
+        # Jalankan di thread terpisah: capture sesi terbaru bisa makan ~30-60s.
+        threading.Thread(target=_monev_command_worker,
+                         args=(client, jid, cmd[1], env), daemon=True).start()
 
     elif cmd[0] == "help":
         client.send_message(jid, HELP_TEXT)
