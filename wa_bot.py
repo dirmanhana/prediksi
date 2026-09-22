@@ -99,10 +99,28 @@ class ChatetinClient:
     def login(self, force=False):
         if self.token and not force:
             return self.token
-        r = self.s.post(f"{self.base}/auth/login", json={
-            "username": self.username, "password": self.password,
-        }, timeout=30)
-        r.raise_for_status()
+        attempts = 0
+        while True:
+            try:
+                r = self.s.post(f"{self.base}/auth/login", json={
+                    "username": self.username, "password": self.password,
+                }, timeout=30)
+            except requests.RequestException as e:
+                attempts += 1
+                if attempts >= 4:
+                    raise
+                wait = 2 ** attempts + 1
+                log(f"⚠️ login error: {e} — backoff {wait}s (attempt {attempts}/4)")
+                time.sleep(wait)
+                continue
+            if r.status_code == 429 and attempts < 4:
+                attempts += 1
+                wait = 2 ** attempts + 1
+                log(f"⚠️ login HTTP 429 — backoff {wait}s (attempt {attempts}/4)")
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            break
         data = r.json()
         if data.get("code") != "SUCCESS":
             raise RuntimeError(f"login gagal: {data.get('message')}")
@@ -1727,7 +1745,18 @@ def main():
         log("predict_daily.py selesai.")
 
     client = ChatetinClient(base, user, pwd)
-    client.login()
+    # Login awal dengan tunggu sabar saat kena rate-limit 429,
+    # supaya bot tidak crash-loop dan memperparah rate limit server.
+    while True:
+        try:
+            client.login()
+            break
+        except requests.HTTPError as e:
+            if getattr(e.response, "status_code", None) == 429:
+                log("⚠️ Login ditahan rate-limit servernya. Coba lagi 180 detik lagi...")
+                time.sleep(180)
+                continue
+            raise
     dev = client.get_device()
     log(f"Device terhubung: {dev.get('display_name')} ({dev.get('jid')})")
 
